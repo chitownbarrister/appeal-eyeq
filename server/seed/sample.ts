@@ -1,0 +1,329 @@
+// Sample data for the model tenant "Nichols Law". SAMPLE ONLY.
+// Runs only when SEED_SAMPLE_DATA=true, and only once (skips if the firm exists).
+// The firm is flagged is_sample, every appeal it creates is data_source 'sample',
+// and every reference row it adds is is_sample, so none of it can be mistaken
+// for real data. Never enable this on an instance that holds real clients.
+
+import path from "node:path";
+import type pg from "pg";
+import { query, withContext } from "../db.js";
+import { provisionFirm, addFirmUser } from "../firms.js";
+import { PASSWORD_MIN_LENGTH } from "../auth.js";
+import { readCsv, toIsoDate, blankToNull } from "./csv.js";
+import { computeAppealTax } from "../../shared/valuation.js";
+import { centsToString, toCents } from "../../shared/money.js";
+import type { AppealStatus, Level, Substage } from "../../shared/domain.js";
+
+const SEED_DIR = path.resolve(process.cwd(), "db", "seed", "sample");
+const FIRM_SLUG = "nichols-law";
+
+const USERS = [
+  { name: "Dillon Nichols", email: "dillon@nicholslaw.example", role: "attorney" as const },
+  { name: "Marcus Tate", email: "marcus@nicholslaw.example", role: "attorney" as const },
+  { name: "Julie Ramos", email: "julie@nicholslaw.example", role: "analyst" as const },
+  { name: "Sana Khan", email: "sana@nicholslaw.example", role: "analyst" as const },
+];
+
+const LEVEL_FROM_LABEL: Record<string, Level> = {
+  Assessor: "assessor",
+  "Board of Review": "bor",
+  PTAB: "ptab",
+  "Circuit Court": "circuit",
+};
+
+const SUBSTAGE_FROM_LABEL: Record<string, Substage> = {
+  "Under review": "under_review",
+  "Fairly assessed": "fairly_assessed",
+  "Appeal filed": "appeal_filed",
+  "Hearing scheduled": "hearing_scheduled",
+  "Decision analysis": "decision_analysis",
+  "Invoice sent": "invoice_sent",
+};
+
+const STATUS_FROM_LABEL: Record<string, AppealStatus> = {
+  "No change": "no_change",
+  "Waiting for decision": "waiting_decision",
+  Reduced: "reduced",
+  Pending: "waiting_decision",
+};
+
+// Equalizer and rate for 1044 Tower Road's tax code, from the prior software's
+// reduction summary (2024) and implied by its exported 2023 figures.
+const SAMPLE_EQUALIZERS = [
+  { year: 2023, factor: "3.0163", source: "Sample: Cook final multiplier, to confirm" },
+  { year: 2024, factor: "3.0355", source: "Sample: Cook final multiplier per prior software" },
+];
+const SAMPLE_RATES = [
+  { taxCode: "23008", taxYear: 2023, rate: "7.686000", source: "Sample: implied by prior software's exported figures, to confirm" },
+  { taxCode: "23008", taxYear: 2024, rate: "7.943607", source: "Sample: prior software reduction summary" },
+];
+
+function levelOfAssessment(county: string, assetType: string, csvValue: string): string {
+  if (csvValue) return csvValue;
+  if (county === "Cook") return assetType === "Residential" ? "10" : "25";
+  return "33.33";
+}
+
+function substageForStatus(status: AppealStatus): Substage {
+  return status === "waiting_decision" ? "appeal_filed" : "closed";
+}
+
+export async function seedSampleData(log: (msg: string) => void = console.log): Promise<void> {
+  const exists = await query("SELECT 1 FROM firms WHERE slug = $1", [FIRM_SLUG]);
+  if (exists.rowCount) {
+    log("Sample data: already present, skipped");
+    return;
+  }
+  const password = process.env.SAMPLE_USER_PASSWORD || "";
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    log(`Sample data: skipped (set SAMPLE_USER_PASSWORD, at least ${PASSWORD_MIN_LENGTH} characters)`);
+    return;
+  }
+
+  await seedSampleReference();
+
+  const [first, ...rest] = USERS;
+  const { firmId, userId: dillonId } = await provisionFirm({
+    name: "Nichols Law",
+    slug: FIRM_SLUG,
+    isSample: true,
+    firstUser: { ...first, password },
+  });
+  const userIds: Record<string, number> = { [first.name]: dillonId };
+  for (const u of rest) userIds[u.name] = await addFirmUser(firmId, { ...u, password });
+
+  await withContext({ actorKind: "system", userId: null, firmId }, async (c) => {
+    await c.query(
+      `UPDATE firms SET letterhead_name = 'Nichols Law' WHERE id = $1`,
+      [firmId],
+    );
+    const accountIds = await seedAccounts(c, firmId, userIds);
+    const propertyIds = await seedProperties(c, firmId, userIds, accountIds);
+    await seedAppeals(c, firmId, userIds, propertyIds);
+  });
+  log("Sample data: Nichols Law created (sample only)");
+}
+
+async function seedSampleReference(): Promise<void> {
+  await withContext({ actorKind: "system", userId: null, firmId: null }, async (c) => {
+    const cook = (await c.query<{ id: number }>(`SELECT id FROM counties WHERE state = 'IL' AND name = 'Cook'`)).rows[0].id;
+    for (const e of SAMPLE_EQUALIZERS) {
+      await c.query(
+        `INSERT INTO equalizers (county_id, township_id, year, factor, source, is_sample) VALUES ($1, NULL, $2, $3, $4, true)
+         ON CONFLICT DO NOTHING`,
+        [cook, e.year, e.factor, e.source],
+      );
+    }
+    for (const r of SAMPLE_RATES) {
+      await c.query(
+        `INSERT INTO tax_rates (county_id, tax_code, tax_year, rate_percent, source, is_sample) VALUES ($1, $2, $3, $4, $5, true)
+         ON CONFLICT (county_id, tax_code, tax_year) DO NOTHING`,
+        [cook, r.taxCode, r.taxYear, r.rate, r.source],
+      );
+    }
+    for (const w of readCsv(path.join(SEED_DIR, "windows.csv"))) {
+      await c.query(
+        `INSERT INTO filing_windows (county_id, township_id, level, assessment_year, opens_on, closes_on, note, is_sample)
+         SELECT c.id, t.id, $3, 2026, $4, $5, $6, true
+           FROM counties c JOIN townships t ON t.county_id = c.id AND t.name = $2
+          WHERE c.state = 'IL' AND c.name = $1
+         ON CONFLICT DO NOTHING`,
+        [w.County, w.Township, LEVEL_FROM_LABEL[w.Level], w.Opens, w.Closes, blankToNull(w.Note)],
+      );
+    }
+  });
+}
+
+function parseAddress(full: string): { address1: string; city: string | null; state: string | null; zip: string | null } {
+  // "1044 Tower Road, Winnetka, IL 60093"
+  const m = full.match(/^(.*),\s*([^,]+),\s*([A-Z]{2})\s+(\d{5})$/);
+  if (!m) return { address1: full, city: null, state: null, zip: null };
+  return { address1: m[1], city: m[2], state: m[3], zip: m[4] };
+}
+
+async function seedAccounts(c: pg.PoolClient, firmId: number, userIds: Record<string, number>): Promise<Record<string, number>> {
+  const ids: Record<string, number> = {};
+  for (const r of readCsv(path.join(SEED_DIR, "clients.csv"))) {
+    const addr = parseAddress(r.Address);
+    const custom = r["Fee terms"].match(/^Custom:\s*([\d.]+)%/);
+    const { rows } = await c.query<{ id: number }>(
+      `INSERT INTO accounts (firm_id, name, account_type, address1, city, state, zip, account_rep_user_id, source,
+                             no_fee, fee_percent_first_year, fee_percent_refund, fee_memo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12) RETURNING id`,
+      [
+        firmId, r.Name, r.Type === "Entity" ? "entity" : "individual", addr.address1, addr.city, addr.state, addr.zip,
+        userIds[r.Representative] ?? null, r.Source, r["Fee terms"].startsWith("No fee"),
+        custom ? custom[1] : null, r["Fee terms"] === "Standard" ? null : r["Fee terms"],
+      ],
+    );
+    ids[r.Name] = rows[0].id;
+  }
+  return ids;
+}
+
+async function seedProperties(
+  c: pg.PoolClient,
+  firmId: number,
+  userIds: Record<string, number>,
+  accountIds: Record<string, number>,
+): Promise<Record<string, { id: number; row: Record<string, string> }>> {
+  const out: Record<string, { id: number; row: Record<string, string> }> = {};
+  for (const r of readCsv(path.join(SEED_DIR, "properties.csv"))) {
+    const geo = await c.query<{ county_id: number; township_id: number }>(
+      `SELECT c.id AS county_id, t.id AS township_id FROM counties c JOIN townships t ON t.county_id = c.id AND t.name = $2
+        WHERE c.state = $3 AND c.name = $1`,
+      [r.County, r.Township, r.State],
+    );
+    if (!geo.rows[0]) throw new Error(`Sample seed: unknown township ${r.Township}, ${r.County}`);
+    const is1044 = r.PIN === "05-17-302-010-0000";
+    const { rows } = await c.query<{ id: number }>(
+      `INSERT INTO properties (firm_id, account_id, name, status, asset_type, use_type, address1, city, state, county_id, township_id,
+                               tax_code, tax_code_confirmed, level_of_assessment, attorney_user_id, analyst_user_id, no_fee,
+                               year_built, building_sqft, purchase_date, purchase_price, acreage, zip)
+       VALUES ($1, $2, $3, 'active', $4, $5, $3, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       RETURNING id`,
+      [
+        firmId, accountIds[r.Client], r.Address, r["Asset type"].toLowerCase(), r.Use, r.City, r.State,
+        geo.rows[0].county_id, geo.rows[0].township_id,
+        is1044 ? "23008" : null, is1044,
+        levelOfAssessment(r.County, r["Asset type"], r["Level of assessment %"]),
+        userIds[r.Attorney], userIds[r.Analyst], r["No fee"] === "Yes",
+        blankToNull(r["Year built"]), blankToNull(r["Building sq ft"]),
+        is1044 ? "2022-10-06" : null, is1044 ? "628000.00" : null, is1044 ? "0.1722" : null,
+        is1044 ? "60093" : null,
+      ],
+    );
+    await c.query(
+      `INSERT INTO parcels (firm_id, property_id, pin, alternate_pin, parcel_type, class, address, city, state, is_primary)
+       VALUES ($1, $2, $3, $3, 'real', NULL, $4, $5, $6, true)`,
+      [firmId, rows[0].id, r.PIN, r.Address.toUpperCase(), r.City.toUpperCase(), r.State],
+    );
+    if (is1044) {
+      await c.query(
+        `INSERT INTO contacts (firm_id, account_id, property_id, name, title, role, address1, city, state, zip)
+         VALUES ($1, $2, $3, 'Dillon Nichols', 'Mr.', 'billing', '1044 Tower Road', 'Winnetka', 'IL', '60093')`,
+        [firmId, accountIds[r.Client], rows[0].id],
+      );
+    }
+    out[r.PIN] = { id: rows[0].id, row: r };
+  }
+  return out;
+}
+
+async function seedAppeals(
+  c: pg.PoolClient,
+  firmId: number,
+  userIds: Record<string, number>,
+  properties: Record<string, { id: number; row: Record<string, string> }>,
+): Promise<void> {
+  const insert = async (a: {
+    propertyId: number; assessmentYear: number; taxYear: number; level: Level; substage: Substage; daysInSubstage?: number;
+    status: AppealStatus; externalId?: string | null; petitionNo?: string | null; filedOn?: string | null;
+    repId: number | null; ratio: string; origAv: string | null; targetAv: string | null; resolvedAv: string | null;
+    origLand?: string; origImpr?: string; targetLand?: string; targetImpr?: string; resolvedLand?: string; resolvedImpr?: string;
+    equalizer?: string | null; equalizerSource?: string | null; rate?: string | null; rateSource?: string | null;
+    imported?: { originalTax: string | null; targetTax: string | null; resolvedTax: string | null; estimatedSavings: string | null; savings: string | null };
+    nextAction?: string | null; nextActionOn?: string | null;
+  }) => {
+    const computed = a.imported
+      ? a.imported
+      : computeAppealTax({ origAv: a.origAv, targetAv: a.targetAv, resolvedAv: a.resolvedAv, equalizer: a.equalizer ?? null, taxRatePercent: a.rate ?? null });
+    await c.query(
+      `INSERT INTO appeals (firm_id, property_id, assessment_year, tax_year, level, substage, substage_since, status, external_id,
+                            petition_no, filed_on, representative_user_id, assessment_ratio, orig_av, target_av, resolved_av,
+                            orig_land_av, orig_impr_av, target_land_av, target_impr_av, resolved_land_av, resolved_impr_av,
+                            equalizer, equalizer_source, tax_rate_percent, tax_rate_source,
+                            original_tax, target_tax, resolved_tax, estimated_savings, savings, calc_override,
+                            next_action, next_action_on, data_source)
+       VALUES ($1, $2, $3, $4, $5, $6, now() - make_interval(days => $7), $8, $9, $10, $11, $12, $13, $14, $15, $16,
+               $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, 'sample')`,
+      [
+        firmId, a.propertyId, a.assessmentYear, a.taxYear, a.level, a.substage, a.daysInSubstage ?? 0, a.status,
+        a.externalId ?? null, a.petitionNo ?? null, a.filedOn ?? null, a.repId, a.ratio, a.origAv, a.targetAv, a.resolvedAv,
+        a.origLand ?? null, a.origImpr ?? null, a.targetLand ?? null, a.targetImpr ?? null, a.resolvedLand ?? null, a.resolvedImpr ?? null,
+        a.equalizer ?? null, a.equalizerSource ?? null, a.rate ?? null, a.rateSource ?? null,
+        computed.originalTax, computed.targetTax, computed.resolvedTax, computed.estimatedSavings, computed.savings,
+        Boolean(a.imported), a.nextAction ?? null, a.nextActionOn ?? null,
+      ],
+    );
+  };
+
+  const dillon = userIds["Dillon Nichols"];
+  const tower = properties["05-17-302-010-0000"];
+
+  // ---- 1044 Tower Road: five appeals from the prior software export.
+  for (const r of readCsv(path.join(SEED_DIR, "1044_appeals.csv"))) {
+    const level = LEVEL_FROM_LABEL[r.Level];
+    const status = STATUS_FROM_LABEL[r.Status];
+    const assessmentYear = Number(r["Assessment year"]);
+    const isCurrent = assessmentYear === 2026;
+    const base = {
+      propertyId: tower.id, assessmentYear, taxYear: Number(r["Tax year"]), level, status,
+      substage: isCurrent && status === "waiting_decision" ? ("appeal_filed" as Substage) : status === "no_change" && level === "assessor" ? ("pushed_next_level" as Substage) : ("closed" as Substage),
+      daysInSubstage: isCurrent && status === "waiting_decision" ? Number(tower.row["Days in substage"]) : 0,
+      externalId: r["Appeal ID"], petitionNo: blankToNull(r["Petition no."]), filedOn: toIsoDate(r.Filed),
+      repId: dillon, ratio: "10",
+      origAv: blankToNull(r["Original AV"]), targetAv: blankToNull(r["Target AV"]), resolvedAv: blankToNull(r["Resolved AV"]),
+    };
+    if (assessmentYear === 2025 && level === "bor") {
+      // Computed live from the reference tables, with land/improvement split from the reduction summary.
+      await insert({
+        ...base, equalizer: "3.0355", equalizerSource: "Sample: Cook 2024 final multiplier",
+        rate: "7.943607", rateSource: "Sample: tax code 23008, tax year 2024",
+        origLand: "20250.00", origImpr: "49750.00", targetLand: "20250.00", targetImpr: "42550.00",
+        resolvedLand: "20250.00", resolvedImpr: "42550.00",
+      });
+    } else if (assessmentYear === 2024 && level === "bor") {
+      await insert({
+        ...base, equalizer: "3.0163", equalizerSource: "Sample: Cook 2023 final multiplier, to confirm",
+        rate: "7.686000", rateSource: "Sample: implied by prior software figures, to confirm",
+      });
+    } else {
+      // Figures as exported by the prior software; kept as entered, not recomputed.
+      await insert({
+        ...base,
+        imported: {
+          originalTax: blankToNull(r["Original tax"]), targetTax: blankToNull(r["Target tax"]),
+          resolvedTax: blankToNull(r["Resolved tax"]), savings: blankToNull(r.Savings),
+          estimatedSavings: r["Original tax"] && r["Target tax"] ? centsToString(toCents(r["Original tax"]) - toCents(r["Target tax"])) : null,
+        },
+      });
+    }
+  }
+
+  // ---- Every other property: its current-cycle appeal.
+  for (const { id, row } of Object.values(properties)) {
+    if (id === tower.id) continue;
+    const level = LEVEL_FROM_LABEL[row["Current level"]];
+    const substage = SUBSTAGE_FROM_LABEL[row.Substage];
+    const isCircuit = level === "circuit";
+    await insert({
+      propertyId: id,
+      assessmentYear: isCircuit ? 2024 : 2026,
+      taxYear: isCircuit ? 2024 : 2025,
+      level, substage, daysInSubstage: Number(row["Days in substage"]),
+      status: substage === "appeal_filed" || substage === "hearing_scheduled" ? "waiting_decision" : "open",
+      repId: userIds[row.Attorney], ratio: row["Level of assessment %"],
+      origAv: row["Current AV"], targetAv: row["Target AV"], resolvedAv: null,
+      imported: { originalTax: null, targetTax: null, resolvedTax: null, savings: null, estimatedSavings: row["Est. first-year savings"] },
+      nextAction: blankToNull(row["Next action"]), nextActionOn: blankToNull(row["Next date"]),
+    });
+  }
+
+  // ---- Prior-cycle results (other than 1044, which has full figures above).
+  for (const r of readCsv(path.join(SEED_DIR, "prior_results.csv"))) {
+    const prop = properties[r.PIN];
+    if (!prop || prop.id === tower.id) continue;
+    const status = STATUS_FROM_LABEL[r.Result];
+    const year = Number(r.Year);
+    const orig = Number(prop.row["Current AV"]);
+    const pct = Number(r["Reduction %"]);
+    const resolved = status === "reduced" ? Math.round(orig * (1 - pct / 100)).toFixed(2) : status === "no_change" ? orig.toFixed(2) : null;
+    await insert({
+      propertyId: prop.id, assessmentYear: year, taxYear: year - 1, level: LEVEL_FROM_LABEL[r.Level],
+      substage: substageForStatus(status), status, repId: userIds[prop.row.Attorney], ratio: prop.row["Level of assessment %"],
+      origAv: orig.toFixed(2), targetAv: null, resolvedAv: resolved,
+      imported: { originalTax: null, targetTax: null, resolvedTax: null, estimatedSavings: null, savings: null },
+    });
+  }
+}
