@@ -7,7 +7,7 @@ export function Placeholder({ title, step, detail }: { title: string; step: numb
           <h1>{title}</h1>
         </div>
       </div>
-      <div className="card placeholder">
+      <div className="card pad placeholder">
         <h2>Arrives in build step {step}</h2>
         <p className="muted">{detail}</p>
       </div>

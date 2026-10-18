@@ -128,7 +128,7 @@ describe("login and sessions", () => {
     expect(me.status).toBe(200);
     expect(me.body.user).toMatchObject({ name: "Dillon Nichols", role: "attorney", isSuperAdmin: false });
     expect(me.body.firm).toMatchObject({ name: "Nichols Law", isSample: true });
-    expect(me.body.permissions).toHaveLength(10);
+    expect(me.body.permissions).toHaveLength(11);
     await api(cookie, "POST", "/api/auth/logout", {});
     expect((await api(cookie, "GET", "/api/auth/me")).status).toBe(401);
   });

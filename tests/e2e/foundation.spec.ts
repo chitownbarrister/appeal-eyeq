@@ -48,6 +48,11 @@ test("settings: users, fees, permissions and the audit trail work end to end", a
 
   await page.getByRole("tab", { name: "Audit log" }).click();
   await expect(page.getByRole("row").filter({ hasText: "Changed fee defaults" }).first()).toContainText("Dillon Nichols");
+  // Put the fee back so later tests see the default.
+  await page.getByRole("tab", { name: "Fee defaults" }).click();
+  await page.getByLabel("Board of Review fee percent").fill("40");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Board of Review fee saved.")).toBeVisible();
 
   await page.getByRole("tab", { name: "Roles & permissions" }).click();
   const toggle = page.getByLabel("Void invoices for analyst");

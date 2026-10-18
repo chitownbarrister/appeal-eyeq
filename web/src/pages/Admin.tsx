@@ -62,7 +62,7 @@ function FirmsTab() {
 
   return (
     <>
-      <div className="card">
+      <div className="card pad">
         <table>
           <thead><tr><th>Firm</th><th>Users</th><th>Support access</th><th /></tr></thead>
           <tbody>
@@ -77,7 +77,7 @@ function FirmsTab() {
           </tbody>
         </table>
       </div>
-      <form className="card" onSubmit={create} aria-label="Create a firm">
+      <form className="card pad" onSubmit={create} aria-label="Create a firm">
         <h3 style={{ marginBottom: 12 }}>Create a firm</h3>
         <div className="form-row">
           <div className="field"><label htmlFor="f-name">Firm name</label><input id="f-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value, slug: slugify(e.target.value) })} required /></div>
@@ -110,7 +110,7 @@ function ReferenceTab() {
   }, []);
   return (
     <>
-      <div className="card">
+      <div className="card pad">
         <p className="muted small" style={{ marginTop: 0 }}>
           Every firm reads these. Editing and the global push arrive in build step 3. Rows marked Sample are placeholders, not published figures.
         </p>
@@ -127,14 +127,14 @@ function ReferenceTab() {
           </tbody>
         </table>
       </div>
-      <div className="card">
+      <div className="card pad">
         <h3 style={{ marginBottom: 10 }}>Equalizers</h3>
         <table>
           <thead><tr><th>County</th><th>Township</th><th>Year</th><th className="num">Factor</th><th>Source</th></tr></thead>
           <tbody>{eqs.map((e) => <tr key={e.id}><td>{e.county}</td><td>{e.township ?? "County-wide"}</td><td>{e.year}</td><td className="num">{e.factor}</td><td className="muted small">{e.source}</td></tr>)}</tbody>
         </table>
       </div>
-      <div className="card">
+      <div className="card pad">
         <h3 style={{ marginBottom: 10 }}>Tax rates</h3>
         <table>
           <thead><tr><th>County</th><th>Tax code</th><th>Tax year</th><th className="num">Rate</th><th>Source</th></tr></thead>

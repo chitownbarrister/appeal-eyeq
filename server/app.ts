@@ -39,6 +39,10 @@ export function createApp(): express.Express {
   // State-changing API calls must come from our own pages (blocks cross-site form posts).
   app.use("/api", (req, res, next) => {
     if (req.method === "GET" || req.method === "HEAD") return next();
+    // A bodiless DELETE can't come from a cross-site form (forms only GET/POST), and
+    // browsers preflight cross-site DELETEs, which this server never approves.
+    const hasBody = Number(req.headers["content-length"] || 0) > 0 || req.headers["transfer-encoding"] !== undefined;
+    if (req.method === "DELETE" && !hasBody) return next();
     if (!req.is("application/json")) {
       res.status(415).json({ error: "Send JSON." });
       return;
@@ -70,11 +74,28 @@ export function createApp(): express.Express {
 
   // Errors: log the route and error type only, never request bodies or client data.
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const e = err as { status?: number; publicMessage?: string; code?: string };
+    if (e?.status && e.publicMessage) {
+      res.status(e.status).json({ error: e.publicMessage });
+      return;
+    }
     const name = err instanceof Error ? err.name : "Error";
-    const code = (err as { code?: string })?.code;
+    const code = e?.code;
     console.error(`Request failed: ${req.method} ${req.path} ${name}${code ? ` (${code})` : ""}`);
     if (code === "42501") {
       res.status(403).json({ error: "Not permitted." });
+      return;
+    }
+    if (code === "23503") {
+      res.status(400).json({ error: "A linked record (client, user, parcel or county) doesn't exist in your firm." });
+      return;
+    }
+    if (code === "23505") {
+      res.status(409).json({ error: "That already exists. A PIN can only be on one property in your firm." });
+      return;
+    }
+    if (code === "22P02" || code === "22003" || code === "23514") {
+      res.status(400).json({ error: "One of the values isn't valid." });
       return;
     }
     res.status(500).json({ error: "Something went wrong. Please try again." });

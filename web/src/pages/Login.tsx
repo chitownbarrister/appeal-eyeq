@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { api, ApiError } from "../api";
+import { api, errorText } from "../api";
 import { EyeMark } from "../components/EyeMark";
 
-export function Login({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
+export function Login({ onSignedIn, notice }: { onSignedIn: () => Promise<void>; notice?: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -16,7 +16,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
       await api("/auth/login", { method: "POST", body: { email, password } });
       await onSignedIn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Sign-in failed. Please try again.");
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -41,6 +41,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
             <div className="eyebrow">Welcome back</div>
             <h2>Sign in</h2>
           </div>
+          {notice && <div className="callout" role="status">{notice}</div>}
           <div className="field">
             <label htmlFor="email">Email</label>
             <input id="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />

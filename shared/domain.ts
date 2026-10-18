@@ -72,6 +72,7 @@ export type Role = (typeof ROLES)[number];
 export const PERMISSIONS = [
   "properties.edit",
   "properties.delete",
+  "accounts.edit",
   "appeals.edit",
   "fees.edit",
   "invoices.send",

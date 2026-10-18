@@ -1,15 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { api, ApiError, type Me } from "./api";
+import { api, ApiError, SIGNED_OUT_EVENT, type Me } from "./api";
+import { clearLookupCache } from "./data";
 import { Login } from "./pages/Login";
 import { Shell } from "./components/Shell";
 import { Dashboard } from "./pages/Dashboard";
 import { Settings } from "./pages/Settings";
 import { Admin } from "./pages/Admin";
 import { Placeholder } from "./pages/Placeholder";
+import { Properties } from "./pages/Properties";
+import { Property } from "./pages/Property";
+import { Accounts } from "./pages/Accounts";
+import { Account } from "./pages/Account";
 
 interface Session {
   me: Me;
+  can: (permission: string) => boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -25,6 +31,7 @@ export function useSession(): Session {
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ended, setEnded] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -38,7 +45,9 @@ export function App() {
   }, []);
 
   const logout = useCallback(async () => {
-    await api("/auth/logout", { method: "POST", body: {} });
+    await api("/auth/logout", { method: "POST", body: {} }).catch(() => undefined);
+    clearLookupCache();
+    setEnded(false);
     setMe(null);
   }, []);
 
@@ -46,13 +55,38 @@ export function App() {
     void refresh();
   }, [refresh]);
 
+  // If the session ends while a page is open (signed out elsewhere, expired), return to sign-in.
+  useEffect(() => {
+    const onSignedOut = () => {
+      clearLookupCache();
+      setMe((current) => {
+        if (current) setEnded(true);
+        return null;
+      });
+    };
+    window.addEventListener(SIGNED_OUT_EVENT, onSignedOut);
+    return () => window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut);
+  }, []);
+
   if (loading) return null;
-  if (!me) return <Login onSignedIn={refresh} />;
+  if (!me) {
+    return (
+      <Login
+        notice={ended ? "Your session ended, so you've been signed out. Sign in again to continue." : ""}
+        onSignedIn={async () => {
+          setEnded(false);
+          clearLookupCache();
+          await refresh();
+        }}
+      />
+    );
+  }
 
   const superAdminOutside = me.user.isSuperAdmin && !me.acting;
+  const can = (permission: string) => !me.user.isSuperAdmin && me.permissions.includes(permission);
 
   return (
-    <SessionContext.Provider value={{ me, refresh, logout }}>
+    <SessionContext.Provider value={{ me, can, refresh, logout }}>
       <Shell>
         {superAdminOutside ? (
           <Routes>
@@ -63,8 +97,10 @@ export function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/properties" element={<Placeholder title="Properties" step={2} detail="The property grid, filters, and each property's year track, appeals, values and parcels." />} />
-            <Route path="/accounts" element={<Placeholder title="Accounts" step={2} detail="Clients, their fee terms, contacts and properties." />} />
+            <Route path="/properties" element={<Properties />} />
+            <Route path="/properties/:id" element={<Property />} />
+            <Route path="/accounts" element={<Accounts />} />
+            <Route path="/accounts/:id" element={<Account />} />
             <Route path="/calendar" element={<Placeholder title="Calendar" step={3} detail="Township filing windows, hearings and deadlines." />} />
             <Route path="/decisions" element={<Placeholder title="Decisions" step={6} detail="Upload a batch of decision letters, review the matches, and apply them." />} />
             <Route path="/billing" element={<Placeholder title="Billing" step={7} detail="Invoices, statements, payments and refunds." />} />

@@ -82,7 +82,7 @@ function UsersTab() {
 
   return (
     <>
-      <div className="card">
+      <div className="card pad">
         <table>
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th /></tr></thead>
           <tbody>
@@ -112,7 +112,7 @@ function UsersTab() {
         </table>
       </div>
       {canManage && (
-        <form className="card" onSubmit={add} aria-label="Add a user">
+        <form className="card pad" onSubmit={add} aria-label="Add a user">
           <h3 style={{ marginBottom: 12 }}>Add a user</h3>
           <div className="form-row">
             <div className="field"><label htmlFor="nu-name">Name</label><input id="nu-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
@@ -163,7 +163,7 @@ function FeesTab() {
   }
 
   return (
-    <div className="card">
+    <div className="card pad">
       <p className="muted small" style={{ marginTop: 0 }}>
         Firm-wide defaults. Individual clients, properties and appeals can carry their own terms, and a property can be marked no fee.
       </p>
@@ -201,6 +201,7 @@ function FeesTab() {
 const PERMISSION_LABELS: Record<string, string> = {
   "properties.edit": "Edit properties",
   "properties.delete": "Delete properties",
+  "accounts.edit": "Edit clients and contacts",
   "appeals.edit": "Edit appeals and values",
   "fees.edit": "Edit fee terms",
   "invoices.send": "Send invoices and statements",
@@ -232,7 +233,7 @@ function PermissionsTab() {
   }
 
   return (
-    <div className="card">
+    <div className="card pad">
       <p className="muted small" style={{ marginTop: 0 }}>Attorneys and Analysts start with the same rights. Switch any of them off per role.</p>
       <table>
         <thead><tr><th>Permission</th><th className="num">Attorney</th><th className="num">Analyst</th></tr></thead>
@@ -298,7 +299,7 @@ function SupportTab() {
 
   return (
     <>
-      <div className="card">
+      <div className="card pad">
         <h3>Appeal EyeQ support can't see your firm's data unless you allow it</h3>
         <p className="muted small">
           A grant lets the Appeal EyeQ administrator view (never change) your firm's data for the hours you choose. You can end it at any
@@ -328,7 +329,7 @@ function SupportTab() {
         )}
         {error && <div className="error" role="alert">{error}</div>}
       </div>
-      <div className="card">
+      <div className="card pad">
         <h3 style={{ marginBottom: 10 }}>Grants</h3>
         {grants.length === 0 ? <p className="muted small">No grants yet.</p> : (
           <table>
@@ -347,7 +348,7 @@ function SupportTab() {
           </table>
         )}
       </div>
-      <div className="card">
+      <div className="card pad">
         <h3 style={{ marginBottom: 10 }}>What support viewed</h3>
         {log.length === 0 ? <p className="muted small">Nothing yet.</p> : (
           <table>
@@ -366,7 +367,7 @@ function AuditTab() {
   useEffect(() => { void api<{ entries: typeof entries }>("/firm/audit-log?limit=100").then((d) => setEntries(d.entries)); }, []);
   const actionLabel: Record<string, string> = { INSERT: "Created", UPDATE: "Changed", DELETE: "Deleted" };
   return (
-    <div className="card">
+    <div className="card pad">
       <p className="muted small" style={{ marginTop: 0 }}>The most recent 100 changes to your firm's data. Entries can't be edited or deleted.</p>
       <table>
         <thead><tr><th>When</th><th>Who</th><th>What</th><th>Record</th></tr></thead>

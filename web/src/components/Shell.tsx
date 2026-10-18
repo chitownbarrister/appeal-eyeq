@@ -4,6 +4,7 @@ import { useSession } from "../App";
 import { api } from "../api";
 import { formatDateTime } from "../format";
 import { EyeMark } from "./EyeMark";
+import { GlobalSearch } from "./GlobalSearch";
 
 const FIRM_NAV = [
   { to: "/dashboard", label: "Dashboard" },
@@ -41,15 +42,8 @@ export function Shell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        {!outsideFirm && (
-          <label className="search" title="Global search arrives with the property screens (step 2)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <circle cx="10.5" cy="10.5" r="6.5" /><path d="m20 20-4.8-4.8" />
-            </svg>
-            <input placeholder="Search PIN, address, client" disabled aria-label="Search" />
-          </label>
-        )}
-        <div className="usermenu" style={outsideFirm ? { marginLeft: "auto" } : undefined}>
+        {outsideFirm ? <span className="sp" /> : <GlobalSearch />}
+        <div className="usermenu">
           <div className="who">
             {me.user.name}
             <small>{me.user.isSuperAdmin ? "Super admin" : `${me.firm?.name} · ${me.user.role === "attorney" ? "Attorney" : "Analyst"}`}</small>
