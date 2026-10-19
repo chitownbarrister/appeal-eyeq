@@ -119,7 +119,7 @@ test("the super admin creates a firm and its attorney signs in to an empty firm"
   const lee = await ctx.newPage();
   await signIn(lee, "lee@lakeviewtax.example", "lakeview-pass-1");
   await expect(lee.getByRole("heading", { name: "Lakeview Tax Partners" })).toBeVisible();
-  await expect(lee.getByText("0 active properties")).toBeVisible();
+  await expect(lee.locator(".subtitle")).toContainText("0 active properties");
   await expect(lee.getByText("Sample data.")).toHaveCount(0);
   await ctx.close();
 });

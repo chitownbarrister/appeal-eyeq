@@ -10,11 +10,13 @@ import { hashPassword, PASSWORD_MIN_LENGTH, requireFirmContext, requirePermissio
 import { LEVELS, PERMISSIONS, ROLES } from "../../shared/domain.js";
 import { mattersRouter } from "./matters.js";
 import { calendarRouter } from "./calendar.js";
+import { dashboardRouter } from "./dashboard.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
 firmRouter.use(mattersRouter);
 firmRouter.use(calendarRouter);
+firmRouter.use(dashboardRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

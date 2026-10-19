@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useSession } from "../App";
 import { useApi } from "../data";
 import { formatDate, formatMoney, titleCase } from "../format";
 import { LEVELS, LEVEL_LABELS, SUBSTAGE_LABELS, LEVEL_SUBSTAGES, type Level, type Substage } from "../../../shared/domain";
 import { PropertySheet } from "../components/forms";
+import type { DashboardData } from "./Dashboard";
 
 export interface PropertyRow {
   id: number; title: string; name: string; address1: string | null; city: string | null; state: string; status: string;
@@ -29,7 +30,12 @@ export function Properties() {
   const navigate = useNavigate();
   const { data, error, reload } = useApi<{ properties: PropertyRow[] }>("/firm/properties");
   const accounts = useApi<{ accounts: { id: number; name: string }[] }>("/firm/accounts");
-  const [filters, setFilters] = useState<Record<FilterKey, string>>(EMPTY_FILTERS);
+  const [params] = useSearchParams();
+  const [filters, setFilters] = useState<Record<FilterKey, string>>(() => {
+    const flag = params.get("flag");
+    return { ...EMPTY_FILTERS, flag: flag === "unfiled" || flag === "stalled" ? flag : "" };
+  });
+  const dash = useApi<DashboardData>("/firm/dashboard");
   const [text, setText] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "title", dir: 1 });
   const [creating, setCreating] = useState(false);
@@ -106,7 +112,6 @@ export function Properties() {
 
   const clients = new Set(all.map((p) => p.account_id)).size;
   const filtered = FILTERS.some((k) => filters[k] && !(k === "status" && filters[k] === "active")) || text;
-  const unfiledCount = all.filter((p) => p.unfiled_window_open && p.status === "active").length;
 
   return (
     <>
@@ -122,17 +127,25 @@ export function Properties() {
         </div>
       </div>
       {error && <div className="error" role="alert">{error}</div>}
+      {dash.data && (
+        <div className="card txstrip" aria-label="Summary">
+          <button onClick={() => setFilters({ ...filters, flag: "unfiled" })}>
+            <b className={`num${dash.data.kpis.unfiled ? " bad" : ""}`}>{dash.data.kpis.unfiled}</b> unfiled with the window open
+          </button>
+          {dash.data.nextClose && (
+            <span>Next close: <b>{dash.data.nextClose.label} {dash.data.nextClose.levelShort}</b>, {formatDate(dash.data.nextClose.closes_on)} ({dash.data.nextClose.days_left} day{dash.data.nextClose.days_left === 1 ? "" : "s"})</span>
+          )}
+          {dash.data.kpis.stalled > 0 && (
+            <button onClick={() => setFilters({ ...filters, flag: "stalled" })}><b className="num bad">{dash.data.kpis.stalled}</b> stalled in Decision analysis</button>
+          )}
+          <span><b className="num">{formatMoney(dash.data.kpis.savingsInPlay)}</b> in play</span>
+          <Link to="/dashboard" style={{ marginLeft: "auto" }}>Dashboard</Link>
+        </div>
+      )}
       <section className="card">
         <div className="ch">
           <h3>Property matters <span className="meta">{rows.length} of {all.length}</span></h3>
-          <span style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-            {unfiledCount > 0 && filters.flag !== "unfiled" && (
-              <button className="lk" onClick={() => setFilters({ ...filters, flag: "unfiled" })}>
-                {unfiledCount} unfiled with the window open
-              </button>
-            )}
-            <span className="meta">Click a column to sort</span>
-          </span>
+          <span className="meta">Click a column to sort</span>
         </div>
         <div className="cb" style={{ paddingBottom: 8 }}>
           <div className="mselects">

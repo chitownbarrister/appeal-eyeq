@@ -190,7 +190,7 @@ export function ValuesEditor({
   return (
     <div className="stack">
       {update && (
-        <div className="banner copper" role="status">
+        <div className="notice-box copper" role="status">
           <span>
             <b>Newer rate published.</b> Tax year {update.taxYear}: equalizer {update.equalizer}, rate {update.ratePercent}%.
             {" "}{update.manual ? "This appeal uses figures entered by hand, so it wasn't changed automatically." : "This appeal is decided, so its figures weren't changed automatically."}
