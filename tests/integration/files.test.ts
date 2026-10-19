@@ -171,6 +171,28 @@ describe("connecting Dropbox", () => {
     expect(r.headers.get("location")).toMatch(/dropbox=error/);
   });
 
+  it("says what Dropbox objected to when the sign-in fails, such as a wrong app secret", async () => {
+    process.env.DROPBOX_APP_SECRET = "mistyped-secret";
+    try {
+      const where = decodeURIComponent((await connect(dillon)).replace(/\+/g, " "));
+      expect(where).toContain("Dropbox didn't complete the sign-in (token exchange: invalid_client");
+      expect(where).toContain("check the Dropbox app key and secret");
+      expect(where).not.toContain("mistyped-secret");
+      expect((await call(env.base, dillon, "GET", "/api/firm/integrations")).body.dropbox.connected).toBe(false);
+    } finally {
+      process.env.DROPBOX_APP_SECRET = FAKE_APP_SECRET;
+    }
+  });
+
+  it("uses Dropbox's standard code flow: no PKCE challenge, the secret stays on the server", async () => {
+    const start = await fetch(`${env.base}/api/firm/integrations/dropbox/connect`, { method: "POST", headers: { Cookie: dillon, "Content-Type": "application/json" }, body: "{}" });
+    const url = new URL(((await start.json()) as { url: string }).url);
+    expect(url.searchParams.get("code_challenge")).toBeNull();
+    expect(url.searchParams.get("client_secret")).toBeNull();
+    expect(url.searchParams.get("token_access_type")).toBe("offline");
+    expect(url.searchParams.get("redirect_uri")).toMatch(/\/api\/firm\/dropbox\/callback$/);
+  });
+
   it("connects a team account for Nichols Law and stores only encrypted tokens", async () => {
     await fetch(`${fake.url}/__test/next-account`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "business" }) });
     expect(await connect(dillon)).toBe("/settings?tab=integrations&dropbox=connected");

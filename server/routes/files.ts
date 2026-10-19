@@ -6,7 +6,7 @@
 // Support access never reaches client documents: the super admin gets 403
 // on every file route, even while a firm has granted read-only access.
 
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import express, { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { withContext } from "../db.js";
@@ -100,9 +100,9 @@ filesRouter.post("/integrations/dropbox/connect", requireFirmAdmin, async (req, 
     return;
   }
   const state = randomBytes(18).toString("base64url");
-  const verifier = randomBytes(48).toString("base64url");
-  const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const cookie = sign({ state, verifier, firmId: req.ctx!.firmId, userId: req.auth!.user.id }, 600);
+  // Dropbox's standard code flow for a server app: the app secret never leaves the server, and the
+  // signed, short-lived state cookie ties the reply to this admin's sign-in.
+  const cookie = sign({ state, firmId: req.ctx!.firmId, userId: req.auth!.user.id }, 600);
   const secure = req.secure || process.env.NODE_ENV === "production";
   res.setHeader("Set-Cookie", `${STATE_COOKIE}=${encodeURIComponent(cookie)}; HttpOnly; SameSite=Lax; Path=/api/firm/dropbox; Max-Age=600${secure ? "; Secure" : ""}`);
   const url = new URL(dropboxUrls().authorize);
@@ -112,8 +112,6 @@ filesRouter.post("/integrations/dropbox/connect", requireFirmAdmin, async (req, 
     token_access_type: "offline",
     redirect_uri: redirectUri(req),
     state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
     scope: DROPBOX_SCOPES.join(" "),
   }).toString();
   res.json({ url: url.toString() });
@@ -129,7 +127,7 @@ interface DbxAccount {
 filesRouter.get("/dropbox/callback", async (req, res) => {
   const back = (q: Record<string, string>) => res.redirect(302, `/settings?${new URLSearchParams({ tab: "integrations", ...q })}`);
   res.setHeader("Set-Cookie", `${STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/firm/dropbox; Max-Age=0`);
-  const saved = verify<{ state: string; verifier: string; firmId: number; userId: number }>(readCookie(req, STATE_COOKIE));
+  const saved = verify<{ state: string; firmId: number; userId: number }>(readCookie(req, STATE_COOKIE));
   if (!saved || saved.state !== req.query.state || saved.firmId !== req.ctx!.firmId || saved.userId !== req.auth!.user.id || !req.auth!.user.isFirmAdmin) {
     return back({ dropbox: "error", reason: "The Dropbox sign-in expired or didn't match. Start again from Connect Dropbox." });
   }
@@ -139,11 +137,22 @@ filesRouter.get("/dropbox/callback", async (req, res) => {
 
   let token: { access_token: string; expires_in: number; refresh_token?: string };
   let account: DbxAccount;
+  // When Dropbox refuses, say which step and what Dropbox said (its error codes carry no secrets),
+  // and log it, so a setup problem such as a mistyped app secret is visible instead of a generic retry.
+  const failed = (step: string, err: unknown) => {
+    const said = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 200);
+    console.error(`Dropbox sign-in failed at ${step} for firm ${req.ctx!.firmId}: ${said}`);
+    return back({ dropbox: "error", reason: `Dropbox didn't complete the sign-in (${step}: ${said}). If this repeats, check the Dropbox app key and secret in the server's settings.` });
+  };
   try {
-    token = await exchangeToken({ grant_type: "authorization_code", code, redirect_uri: redirectUri(req), code_verifier: saved.verifier });
+    token = await exchangeToken({ grant_type: "authorization_code", code, redirect_uri: redirectUri(req) });
+  } catch (err) {
+    return failed("token exchange", err);
+  }
+  try {
     account = await rpcWithToken<DbxAccount>(token.access_token, "users/get_current_account", null);
-  } catch {
-    return back({ dropbox: "error", reason: "Dropbox didn't complete the sign-in. Try again in a moment." });
+  } catch (err) {
+    return failed("account lookup", err);
   }
   const isSample = await withContext(req.ctx!, async (c) => (await c.query<{ is_sample: boolean }>(`SELECT is_sample FROM firms WHERE id = $1`, [req.ctx!.firmId])).rows[0]?.is_sample);
   const isTeam = account.account_type[".tag"] === "business";

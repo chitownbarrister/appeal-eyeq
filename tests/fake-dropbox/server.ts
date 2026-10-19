@@ -28,7 +28,7 @@ export interface FakeDropbox {
     trees: Map<string, Map<string, Node>>;
     access: Map<string, { accountId: string; expires: number }>;
     refresh: Map<string, string>;
-    codes: Map<string, { accountId: string; challenge: string; redirect: string }>;
+    codes: Map<string, { accountId: string; challenge: string | null; redirect: string }>;
     teamRootReadOnly: boolean;
     lastPathRoot: string | null;
     calls: string[];
@@ -79,7 +79,7 @@ export function createFakeDropbox() {
   app.get("/oauth2/authorize", (req, res) => {
     const q = req.query as Record<string, string>;
     if (q.client_id !== FAKE_APP_KEY) { res.status(400).send("bad client_id"); return; }
-    if (q.code_challenge_method !== "S256" || !q.code_challenge || q.token_access_type !== "offline") { res.status(400).send("bad request"); return; }
+    if ((q.code_challenge && q.code_challenge_method !== "S256") || q.token_access_type !== "offline") { res.status(400).send("bad request"); return; }
     const kind = state.nextAccount;
     const n = state.accounts.size + 1;
     const acct: Account = {
@@ -88,7 +88,7 @@ export function createFakeDropbox() {
     };
     state.accounts.set(acct.id, acct);
     const code = newId("code-");
-    state.codes.set(code, { accountId: acct.id, challenge: q.code_challenge, redirect: q.redirect_uri });
+    state.codes.set(code, { accountId: acct.id, challenge: q.code_challenge || null, redirect: q.redirect_uri });
     res.redirect(302, `${q.redirect_uri}?${new URLSearchParams({ code, state: q.state })}`);
   });
 
@@ -106,7 +106,7 @@ export function createFakeDropbox() {
       const c = state.codes.get(b.code);
       state.codes.delete(b.code);
       if (!c || c.redirect !== b.redirect_uri) { fail(res, 400, "invalid_grant"); return; }
-      if (createHash("sha256").update(b.code_verifier ?? "").digest("base64url") !== c.challenge) { fail(res, 400, "invalid_grant"); return; }
+      if (c.challenge && createHash("sha256").update(b.code_verifier ?? "").digest("base64url") !== c.challenge) { fail(res, 400, "invalid_grant"); return; }
       res.json(issue(c.accountId, true));
       return;
     }
