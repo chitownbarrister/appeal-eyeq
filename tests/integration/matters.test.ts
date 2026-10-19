@@ -198,7 +198,8 @@ describe("contacts and activities", () => {
     expect(done.body.activity.status).toBe("done");
     expect(done.body.activity.completed_at).not.toBeNull();
     const d = await call(env.base, dillon, "GET", `/api/firm/properties/${towerId}`);
-    expect(d.body.activities[0]).toMatchObject({ subject: "Pull 2026 assessment notice", created_by_name: "Dillon Nichols" });
+    // Open tasks come first (1044 has four sample tasks), finished ones last.
+    expect(d.body.activities.at(-1)).toMatchObject({ subject: "Pull 2026 assessment notice", status: "done", created_by_name: "Dillon Nichols" });
     expect((await call(env.base, dillon, "DELETE", `/api/firm/contacts/${c.body.contact.id}`)).status).toBe(200);
     expect((await call(env.base, dillon, "DELETE", `/api/firm/activities/${a.body.activity.id}`)).status).toBe(200);
   });

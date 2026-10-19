@@ -59,7 +59,7 @@ export function Dashboard() {
               <div className="ch"><h3>Coming in build step 4</h3></div>
               <div className="cb">
                 <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
-                  Window watch, the pipeline by level and substage, the fee forecast, and win rates. They read from the property screens and the filing-window calendar, which come first.
+                  Window watch, the pipeline by level and substage, the fee forecast, and win rates. They build on the property screens and the calendar, which are now in place.
                 </p>
               </div>
             </section>

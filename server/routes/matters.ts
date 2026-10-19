@@ -13,6 +13,9 @@ import { LEVELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, type Level } from "../
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js";
+import { referenceFor, differsFromReference, isManualSource, windowFor } from "../reference-lookup.js";
+import { todayIso } from "../today.js";
+import { LEVEL_SHORT, WINDOW_ACTIVE_SUBSTAGES, buildDeadlineList, windowItem, type DeadlineRow } from "../deadlines.js";
 
 export const mattersRouter = Router();
 
@@ -43,29 +46,21 @@ function defaultRatio(countyName: string, assetType: string): string {
   return "33.33";
 }
 
-/** Most recent published equalizer and composite rate for a property, with sources. */
-async function referenceFor(c: pg.PoolClient, countyId: number, townshipId: number | null, taxCode: string | null) {
-  const rate = taxCode
-    ? (await c.query<{ tax_year: number; rate_percent: string; source: string | null; is_sample: boolean }>(
-        `SELECT tax_year, rate_percent, source, is_sample FROM tax_rates WHERE county_id = $1 AND tax_code = $2 ORDER BY tax_year DESC LIMIT 1`,
-        [countyId, taxCode],
-      )).rows[0] ?? null
-    : null;
-  // Equalizer for the rate's year if we have one, else the latest; township-specific beats county-wide.
-  const eq = (await c.query<{ year: number; factor: string; source: string | null; township_id: number | null }>(
-    `SELECT year, factor, source, township_id FROM equalizers
-      WHERE county_id = $1 AND (township_id IS NULL OR township_id = $2) AND ($3::int IS NULL OR year = $3)
-      ORDER BY year DESC, township_id NULLS LAST LIMIT 1`,
-    [countyId, townshipId, rate?.tax_year ?? null],
-  )).rows[0] ?? (await c.query<{ year: number; factor: string; source: string | null; township_id: number | null }>(
-    `SELECT year, factor, source, township_id FROM equalizers
-      WHERE county_id = $1 AND (township_id IS NULL OR township_id = $2)
-      ORDER BY year DESC, township_id NULLS LAST LIMIT 1`,
-    [countyId, townshipId],
-  )).rows[0] ?? null;
+/** Substages after which an appeal's figures are settled (invoiced, pushed on, or closed). */
+const SETTLED_SUBSTAGES = ["invoice_sent", "pushed_next_level", "closed"];
+
+/**
+ * When a newer equalizer or rate is published than an appeal uses, and the
+ * appeal wasn't refreshed automatically (it's decided, or its figures were
+ * entered by hand), say so, so someone can apply it with one click.
+ */
+function referenceUpdate(a: Record<string, any>, ref: Awaited<ReturnType<typeof referenceFor>>) {
+  if (a.calc_override || SETTLED_SUBSTAGES.includes(a.substage)) return null;
+  if (!differsFromReference(a as { equalizer: string | null; tax_rate_percent: string | null }, ref)) return null;
   return {
-    rate: rate ? { taxYear: rate.tax_year, ratePercent: rate.rate_percent, source: `${rate.source ?? "Reference table"} (tax year ${rate.tax_year})` } : null,
-    equalizer: eq ? { year: eq.year, factor: eq.factor, source: `${eq.source ?? "Reference table"} (${eq.year})` } : null,
+    equalizer: ref.equalizer!.factor, equalizerYear: ref.equalizer!.year,
+    ratePercent: ref.rate!.ratePercent, taxYear: ref.rate!.taxYear,
+    manual: isManualSource(a.equalizer_source) || isManualSource(a.tax_rate_source),
   };
 }
 
@@ -95,7 +90,9 @@ mattersRouter.get("/properties", async (req, res) => {
               pp.pin, p.no_fee,
               cur.id AS appeal_id, cur.level, cur.substage, cur.status AS appeal_status, cur.assessment_year,
               GREATEST(0, EXTRACT(day FROM now() - cur.substage_since))::int AS days_in_substage,
-              cur.orig_av AS current_av, cur.target_av, cur.estimated_savings, cur.next_action, cur.next_action_on
+              cur.orig_av AS current_av, cur.target_av, cur.estimated_savings, cur.next_action, cur.next_action_on,
+              win.opens_on AS window_opens_on, win.closes_on AS window_closes_on,
+              nd.title AS deadline_title, nd.due_on AS deadline_on, nd.kind AS deadline_kind
          FROM properties p
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
          JOIN counties co ON co.id = p.county_id
@@ -107,12 +104,48 @@ mattersRouter.get("/properties", async (req, res) => {
             ORDER BY x.is_primary DESC, x.id LIMIT 1
          ) pp ON true
          LEFT JOIN cur ON cur.property_id = p.id
+         LEFT JOIN LATERAL (
+           SELECT w.opens_on, w.closes_on FROM filing_windows w
+            WHERE w.county_id = p.county_id AND (w.township_id IS NULL OR w.township_id = p.township_id)
+              AND w.level = cur.level AND w.assessment_year = cur.assessment_year
+            ORDER BY w.township_id NULLS LAST LIMIT 1
+         ) win ON true
+         LEFT JOIN LATERAL (
+           SELECT d.title, d.due_on, d.kind FROM deadlines d
+            WHERE d.firm_id = p.firm_id AND d.property_id = p.id AND d.status = 'open'
+            ORDER BY d.due_on, d.due_time NULLS LAST LIMIT 1
+         ) nd ON true
         WHERE p.firm_id = $1
         ORDER BY p.name`,
       [firmId],
     )).rows,
   );
-  res.json({ properties: rows.map((r) => ({ ...r, title: matterTitle(r.pin, r.address1 || r.name, r.city, r.township) })) });
+  const today = todayIso();
+  res.json({
+    today,
+    properties: rows.map((r) => {
+      const unfiledSubstage = r.substage && WINDOW_ACTIVE_SUBSTAGES.includes(r.substage);
+      const unfiled = Boolean(unfiledSubstage && r.window_opens_on && r.window_opens_on <= today && today <= r.window_closes_on);
+      // The next date: the earliest open deadline, or the window close for an appeal not yet filed.
+      const candidates: { title: string; on: string; kind: string }[] = [];
+      if (r.deadline_on) candidates.push({ title: r.deadline_title, on: r.deadline_on, kind: r.deadline_kind });
+      if (unfiledSubstage && r.window_closes_on && r.window_closes_on >= today) {
+        const label = `${r.township ?? r.county} ${LEVEL_SHORT[r.level as Level]} window ${r.window_opens_on > today ? "opens" : "closes"}`;
+        candidates.push({ title: label, on: r.window_opens_on > today ? r.window_opens_on : r.window_closes_on, kind: "window" });
+      }
+      candidates.sort((a, b) => a.on.localeCompare(b.on));
+      const next = candidates[0] ?? (r.next_action_on || r.next_action ? { title: r.next_action ?? "", on: r.next_action_on, kind: "note" } : null);
+      const { deadline_title: _t, deadline_on: _o, deadline_kind: _k, ...rest } = r;
+      return {
+        ...rest,
+        title: matterTitle(r.pin, r.address1 || r.name, r.city, r.township),
+        unfiled_window_open: unfiled,
+        next_title: next?.title ?? null,
+        next_on: next?.on ?? null,
+        next_kind: next?.kind ?? null,
+      };
+    }),
+  });
 });
 
 const PropertyFields = {
@@ -241,13 +274,21 @@ mattersRouter.get("/properties/:id", async (req, res) => {
     )).rows;
     const reference = await referenceFor(c, p.county_id, p.township_id, p.tax_code);
     const feeDefaults = await firmFeeDefaults(c, firmId);
-    return { p, parcels, appeals, contacts, activities, reference, feeDefaults };
+    const deadlineRows = (await c.query<DeadlineRow>(
+      `SELECT d.*, a.level FROM deadlines d LEFT JOIN appeals a ON a.firm_id = d.firm_id AND a.id = d.appeal_id
+        WHERE d.firm_id = $1 AND d.property_id = $2`,
+      [firmId, pid],
+    )).rows;
+    const cur = appeals[0] ?? null;
+    const win = cur ? await windowFor(c, p.county_id, p.township_id, cur.level, cur.assessment_year) : null;
+    return { p, parcels, appeals, contacts, activities, reference, feeDefaults, deadlineRows, cur, win };
   });
   if (!data) {
     res.status(404).json({ error: "Property not found." });
     return;
   }
   const { p } = data;
+  const today = todayIso();
   const feeSources = {
     firmDefaults: data.feeDefaults,
     account: { fee_percent_first_year: p.account_fee_first_year, fee_percent_refund: p.account_fee_refund, no_fee: p.account_no_fee },
@@ -259,8 +300,13 @@ mattersRouter.get("/properties/:id", async (req, res) => {
     parcels: data.parcels,
     appeals: data.appeals.map((a) => {
       const fee = effectiveFee(a.level, { ...feeSources, appeal: { fee_percent: a.fee_percent } });
-      return { ...a, fee, fee_amount: firstYearFee(a.savings, fee), estimated_fee: firstYearFee(a.estimated_savings, fee) };
+      return {
+        ...a, fee, fee_amount: firstYearFee(a.savings, fee), estimated_fee: firstYearFee(a.estimated_savings, fee),
+        reference_update: referenceUpdate(a, data.reference),
+      };
     }),
+    deadlines: buildDeadlineList(data.deadlineRows, windowItem(data.win, data.cur, today), today),
+    today,
     contacts: data.contacts,
     activities: data.activities,
     reference: data.reference,

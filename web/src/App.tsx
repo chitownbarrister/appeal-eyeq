@@ -12,6 +12,7 @@ import { Properties } from "./pages/Properties";
 import { Property } from "./pages/Property";
 import { Accounts } from "./pages/Accounts";
 import { Account } from "./pages/Account";
+import { Calendar } from "./pages/Calendar";
 
 interface Session {
   me: Me;
@@ -101,7 +102,7 @@ export function App() {
             <Route path="/properties/:id" element={<Property />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/accounts/:id" element={<Account />} />
-            <Route path="/calendar" element={<Placeholder title="Calendar" step={3} detail="Township filing windows, hearings and deadlines." />} />
+            <Route path="/calendar" element={<Calendar />} />
             <Route path="/decisions" element={<Placeholder title="Decisions" step={6} detail="Upload a batch of decision letters, review the matches, and apply them." />} />
             <Route path="/billing" element={<Placeholder title="Billing" step={7} detail="Invoices, statements, payments and refunds." />} />
             <Route path="/settings" element={<Settings />} />

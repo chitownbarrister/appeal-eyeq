@@ -12,11 +12,15 @@ export interface PropertyRow {
   attorney_user_id: number | null; attorney_name: string | null; analyst_user_id: number | null; analyst_name: string | null;
   pin: string | null; level: Level | null; substage: Substage | null; days_in_substage: number | null; assessment_year: number | null;
   estimated_savings: string | null; next_action: string | null; next_action_on: string | null; no_fee: boolean;
+  unfiled_window_open: boolean; window_closes_on: string | null; next_title: string | null; next_on: string | null; next_kind: string | null;
 }
 
 type SortKey = "title" | "client" | "county" | "township" | "type" | "level" | "analyst" | "attorney" | "est" | "next";
-const FILTERS = ["county", "township", "level", "analyst", "attorney", "type", "client", "status"] as const;
+const FILTERS = ["county", "township", "level", "analyst", "attorney", "type", "client", "status", "flag"] as const;
 type FilterKey = (typeof FILTERS)[number];
+
+const EMPTY_FILTERS: Record<FilterKey, string> = { county: "", township: "", level: "", analyst: "", attorney: "", type: "", client: "", status: "active", flag: "" };
+const isStalled = (p: PropertyRow) => p.substage === "decision_analysis" && (p.days_in_substage ?? 0) > 14;
 
 const levelRank = (r: PropertyRow) => (r.level ? LEVELS.indexOf(r.level) * 10 + LEVEL_SUBSTAGES[r.level].indexOf(r.substage as Substage) : 99);
 
@@ -25,7 +29,7 @@ export function Properties() {
   const navigate = useNavigate();
   const { data, error, reload } = useApi<{ properties: PropertyRow[] }>("/firm/properties");
   const accounts = useApi<{ accounts: { id: number; name: string }[] }>("/firm/accounts");
-  const [filters, setFilters] = useState<Record<FilterKey, string>>({ county: "", township: "", level: "", analyst: "", attorney: "", type: "", client: "", status: "active" });
+  const [filters, setFilters] = useState<Record<FilterKey, string>>(EMPTY_FILTERS);
   const [text, setText] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "title", dir: 1 });
   const [creating, setCreating] = useState(false);
@@ -42,6 +46,7 @@ export function Properties() {
       type: ["residential", "commercial", "industrial"].map((v) => [v, titleCase(v)]),
       client: uniq(all.map((p) => p.account_name)).map((v) => [v, v]),
       status: ["active", "closed", "inactive", "sold"].map((v) => [v, titleCase(v)]),
+      flag: [["unfiled", "Unfiled, window open"], ["stalled", "Stalled in Decision analysis"]],
     } as Record<FilterKey, string[][]>;
   }, [all, filters.county]);
 
@@ -57,12 +62,13 @@ export function Properties() {
       (!filters.type || p.asset_type === filters.type) &&
       (!filters.client || p.account_name === filters.client) &&
       (!filters.status || p.status === filters.status) &&
+      (!filters.flag || (filters.flag === "unfiled" ? p.unfiled_window_open : isStalled(p))) &&
       (!t || p.title.toLowerCase().includes(t) || p.account_name.toLowerCase().includes(t) || (digits.length >= 4 && (p.pin ?? "").replace(/\D/g, "").includes(digits))),
     );
     const key: Record<SortKey, (p: PropertyRow) => string | number> = {
       title: (p) => p.title.toLowerCase(), client: (p) => p.account_name.toLowerCase(), county: (p) => p.county, township: (p) => p.township ?? "",
       type: (p) => p.asset_type, level: levelRank, analyst: (p) => p.analyst_name ?? "", attorney: (p) => p.attorney_name ?? "",
-      est: (p) => Number(p.estimated_savings ?? -1), next: (p) => p.next_action_on ?? "9999",
+      est: (p) => Number(p.estimated_savings ?? -1), next: (p) => p.next_on ?? "9999",
     };
     return [...out].sort((a, b) => {
       const x = key[sort.key](a), y = key[sort.key](b);
@@ -83,11 +89,11 @@ export function Properties() {
   );
 
   function exportCsv() {
-    const header = ["Matter", "PIN", "Client", "County", "Township", "Type", "Use", "Level", "Substage", "Analyst", "Attorney", "Est. savings", "Next action", "Next date"];
+    const header = ["Matter", "PIN", "Client", "County", "Township", "Type", "Use", "Level", "Substage", "Unfiled, window open", "Analyst", "Attorney", "Est. savings", "Next", "Next date"];
     const lines = rows.map((p) => [
       p.title, p.pin ?? "", p.account_name, p.county, p.township ?? "", titleCase(p.asset_type), p.use_type ?? "",
-      p.level ? LEVEL_LABELS[p.level] : "", p.substage ? SUBSTAGE_LABELS[p.substage] : "", p.analyst_name ?? "", p.attorney_name ?? "",
-      p.estimated_savings ?? "", p.next_action ?? "", p.next_action_on ?? "",
+      p.level ? LEVEL_LABELS[p.level] : "", p.substage ? SUBSTAGE_LABELS[p.substage] : "", p.unfiled_window_open ? "Yes" : "",
+      p.analyst_name ?? "", p.attorney_name ?? "", p.estimated_savings ?? "", p.next_title ?? "", p.next_on ?? "",
     ]);
     const csv = [header, ...lines].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -100,6 +106,7 @@ export function Properties() {
 
   const clients = new Set(all.map((p) => p.account_id)).size;
   const filtered = FILTERS.some((k) => filters[k] && !(k === "status" && filters[k] === "active")) || text;
+  const unfiledCount = all.filter((p) => p.unfiled_window_open && p.status === "active").length;
 
   return (
     <>
@@ -118,7 +125,14 @@ export function Properties() {
       <section className="card">
         <div className="ch">
           <h3>Property matters <span className="meta">{rows.length} of {all.length}</span></h3>
-          <span className="meta">Click a column to sort</span>
+          <span style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+            {unfiledCount > 0 && filters.flag !== "unfiled" && (
+              <button className="lk" onClick={() => setFilters({ ...filters, flag: "unfiled" })}>
+                {unfiledCount} unfiled with the window open
+              </button>
+            )}
+            <span className="meta">Click a column to sort</span>
+          </span>
         </div>
         <div className="cb" style={{ paddingBottom: 8 }}>
           <div className="mselects">
@@ -126,7 +140,7 @@ export function Properties() {
               <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Address, PIN, client" aria-label="Filter properties" />
             </label>
             {FILTERS.map((k) => (
-              <label key={k}>{{ county: "County", township: "Township", level: "Appeal level", analyst: "Analyst", attorney: "Attorney", type: "Asset type", client: "Client", status: "Status" }[k]}
+              <label key={k}>{{ county: "County", township: "Township", level: "Appeal level", analyst: "Analyst", attorney: "Attorney", type: "Asset type", client: "Client", status: "Status", flag: "Needs attention" }[k]}
                 <select value={filters[k]} onChange={(e) => setFilters({ ...filters, [k]: e.target.value, ...(k === "county" ? { township: "" } : {}) })}>
                   <option value="">All</option>
                   {options[k].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -135,7 +149,7 @@ export function Properties() {
             ))}
           </div>
           {filtered && (
-            <button className="lk" style={{ marginTop: 8 }} onClick={() => { setFilters({ county: "", township: "", level: "", analyst: "", attorney: "", type: "", client: "", status: "active" }); setText(""); }}>
+            <button className="lk" style={{ marginTop: 8 }} onClick={() => { setFilters(EMPTY_FILTERS); setText(""); }}>
               Clear filters
             </button>
           )}
@@ -145,7 +159,7 @@ export function Properties() {
             <thead>
               <tr>
                 {th("title", "Matter")}{th("client", "Client")}{th("county", "County")}{th("township", "Township")}{th("type", "Type")}
-                {th("level", "Level · substage")}{th("analyst", "Analyst")}{th("attorney", "Attorney")}{th("est", "Est. savings", true)}{th("next", "Next date")}
+                {th("level", "Level · substage")}{th("analyst", "Analyst")}{th("attorney", "Attorney")}{th("est", "Est. savings", true)}{th("next", "Next")}
               </tr>
             </thead>
             <tbody>
@@ -167,7 +181,8 @@ export function Properties() {
                         <b style={{ fontWeight: 500, color: "var(--navy)" }}>{LEVEL_LABELS[p.level]}</b>
                         <div className="rail-l">
                           {p.substage && SUBSTAGE_LABELS[p.substage]}
-                          {p.substage === "decision_analysis" && (p.days_in_substage ?? 0) > 14 && <> <span className="pill crit">{p.days_in_substage}d</span></>}
+                          {isStalled(p) && <> <span className="pill crit" title="Stalled in Decision analysis">{p.days_in_substage}d</span></>}
+                          {p.unfiled_window_open && <> <span className="pill copper" title={`Not filed yet; the window closes ${formatDate(p.window_closes_on)}`}>Unfiled</span></>}
                         </div>
                       </>
                     ) : <span className="meta">No appeal yet</span>}
@@ -175,7 +190,10 @@ export function Properties() {
                   <td style={{ whiteSpace: "nowrap" }}>{p.analyst_name}</td>
                   <td style={{ whiteSpace: "nowrap" }}>{p.attorney_name}</td>
                   <td className="num">{p.estimated_savings && Number(p.estimated_savings) > 0 ? formatMoney(p.estimated_savings) : "—"}</td>
-                  <td className="num" style={{ whiteSpace: "nowrap" }} title={p.next_action ?? ""}>{p.next_action_on ? formatDate(p.next_action_on) : "—"}</td>
+                  <td style={{ minWidth: 130 }}>
+                    {p.next_on ? <span className="num" style={{ whiteSpace: "nowrap", display: "block" }}>{formatDate(p.next_on)}</span> : null}
+                    {p.next_title ? <span className="mn" style={{ display: "block" }}>{p.next_title}</span> : !p.next_on && "—"}
+                  </td>
                 </tr>
               ))}
               {data && rows.length === 0 && (

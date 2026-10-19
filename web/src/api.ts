@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public body: Record<string, unknown> | null = null) {
     super(message);
   }
 }
@@ -24,7 +24,7 @@ export async function api<T = unknown>(path: string, options: { method?: string;
   if (res.status === 401 && !path.startsWith("/auth/")) {
     window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, data?.error || `Request failed (${res.status})`, data as Record<string, unknown> | null);
   return data as T;
 }
 

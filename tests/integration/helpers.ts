@@ -13,6 +13,7 @@ export function configureEnv(): void {
   process.env.SUPER_ADMIN_EMAIL = ADMIN.email;
   process.env.SUPER_ADMIN_PASSWORD = ADMIN.password;
   process.env.SAMPLE_USER_PASSWORD = PW;
+  process.env.APP_TODAY = "2026-10-19"; // the sample windows and deadlines are dated around this day
 }
 
 export interface TestEnv {

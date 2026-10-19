@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText } from "../api";
 import { useFirmUsers } from "../data";
-import { cleanNumber, fmvFromAv, formatMoney, formatValue, nn } from "../format";
+import { cleanNumber, fmvFromAv, formatDateTime, formatMoney, formatValue, nn } from "../format";
 import { computeAppealTax } from "../../../shared/valuation";
 import { centsToString, equalizedValue, feeAmount, toCents } from "../../../shared/money";
 import { APPEAL_STATUSES, APPEAL_STATUS_LABELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS, type Level, type Substage } from "../../../shared/domain";
@@ -113,7 +113,7 @@ export function ValuesEditor({
       const body: Record<string, unknown> = {
         ...values,
         status: form.status, substage: form.substage, externalId: nn(form.externalId), petitionNo: nn(form.petitionNo),
-        filedOn: nn(form.filedOn), decisionOn: nn(form.decisionOn), hearingAt: form.hearingAt ? new Date(form.hearingAt).toISOString() : null,
+        filedOn: nn(form.filedOn), decisionOn: nn(form.decisionOn),
         representativeUserId: form.representativeUserId ? Number(form.representativeUserId) : null,
         nextAction: nn(form.nextAction), nextActionOn: nn(form.nextActionOn), assessmentRatio: nn(cleanNumber(form.assessmentRatio)),
         excludeFromTotals: form.excludeFromTotals, calcOverride: form.calcOverride,
@@ -185,8 +185,20 @@ export function ValuesEditor({
 
   const substages: Substage[] = [...LEVEL_SUBSTAGES[appeal.level], "closed"];
 
+  const update = appeal.reference_update as null | { equalizer: string; equalizerYear: number; ratePercent: string; taxYear: number; manual: boolean };
+
   return (
     <div className="stack">
+      {update && (
+        <div className="banner copper" role="status">
+          <span>
+            <b>Newer rate published.</b> Tax year {update.taxYear}: equalizer {update.equalizer}, rate {update.ratePercent}%.
+            {" "}{update.manual ? "This appeal uses figures entered by hand, so it wasn't changed automatically." : "This appeal is decided, so its figures weren't changed automatically."}
+          </span>
+          <span className="sp" />
+          {canEdit && <button type="button" className="btn small copper" onClick={() => void useReference()} disabled={busy}>Apply the newer rate</button>}
+        </div>
+      )}
       <div className="tbar" style={{ marginBottom: 0 }}>
         <div>
           <b style={{ color: "var(--navy)" }}>{appeal.assessment_year} {LEVEL_LABELS[appeal.level]}</b>
@@ -286,7 +298,11 @@ export function ValuesEditor({
           <div className="fld"><label htmlFor="v-ext">Appeal / filing ID</label><input id="v-ext" className="in" value={form.externalId} disabled={!canEdit} onChange={(e) => setForm({ ...form, externalId: e.target.value })} /></div>
           <div className="fld"><label htmlFor="v-filed">Date filed</label><input id="v-filed" type="date" className="in" value={form.filedOn} disabled={!canEdit} onChange={(e) => setForm({ ...form, filedOn: e.target.value })} /></div>
           <div className="fld"><label htmlFor="v-dec">Decision date</label><input id="v-dec" type="date" className="in" value={form.decisionOn} disabled={!canEdit} onChange={(e) => setForm({ ...form, decisionOn: e.target.value })} /></div>
-          <div className="fld"><label htmlFor="v-hear">Hearing</label><input id="v-hear" type="datetime-local" className="in" value={form.hearingAt} disabled={!canEdit} onChange={(e) => setForm({ ...form, hearingAt: e.target.value })} /></div>
+          <div className="fld">
+            <label htmlFor="v-hear">Hearing</label>
+            <input id="v-hear" className="in" readOnly disabled value={appeal.hearing_at ? formatDateTime(appeal.hearing_at) : "None scheduled"} />
+            <span className="hint">Add or change hearings under Deadlines in the summary card.</span>
+          </div>
           <div className="fld">
             <label htmlFor="v-rep">Representative</label>
             <select id="v-rep" className="in" value={form.representativeUserId} disabled={!canEdit} onChange={(e) => setForm({ ...form, representativeUserId: e.target.value })}>

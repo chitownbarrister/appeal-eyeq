@@ -7,9 +7,11 @@ import { z } from "zod";
 import { query } from "../db.js";
 import { activeGrantId, PASSWORD_MIN_LENGTH, requireSuperAdmin } from "../auth.js";
 import { provisionFirm } from "../firms.js";
+import { adminReferenceRouter } from "./admin-reference.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireSuperAdmin);
+adminRouter.use(adminReferenceRouter);
 
 adminRouter.get("/firms", async (_req, res) => {
   const { rows } = await query(
@@ -78,7 +80,9 @@ adminRouter.post("/exit", async (req, res) => {
 
 adminRouter.get("/reference-changes", async (_req, res) => {
   const { rows } = await query(
-    `SELECT id, table_name, row_id, action, at FROM reference_change_log ORDER BY at DESC, id DESC LIMIT 200`,
+    `SELECT l.id, l.table_name, l.row_id, l.action, l.at, l.before, l.after, u.name AS actor_name
+       FROM reference_change_log l LEFT JOIN users u ON u.id = l.actor_user_id
+      ORDER BY l.at DESC, l.id DESC LIMIT 200`,
   );
   res.json({ changes: rows });
 });

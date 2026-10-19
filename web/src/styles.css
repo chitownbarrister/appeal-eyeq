@@ -28,6 +28,10 @@
   --sand: #d8c2a4;
   --net-wash: #e8ecf4;
   --hover: #fcfbf8;
+  /* Shades worked out from the brand colors, so a retheme carries them along. */
+  --navy-hover: color-mix(in oklab, var(--navy), white 9%);
+  --copper-hover: color-mix(in oklab, var(--copper), black 10%);
+  --done-wash: color-mix(in oklab, var(--paper), white 55%);
   --f-display: "Playfair Display", Georgia, "Times New Roman", serif;
   --f-body: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --r: 3px;
@@ -188,11 +192,11 @@ table.values tr.group td { background: var(--hover); font-size: 11.5px; color: v
   display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: var(--r);
   border: 1px solid var(--navy); background: var(--navy); font-size: 12.5px; font-weight: 500; color: #fff; text-decoration: none; white-space: nowrap;
 }
-.btn:hover { background: #13306a; }
+.btn:hover { background: var(--navy-hover); }
 .btn.secondary { background: var(--card); color: var(--navy); border-color: var(--line); }
 .btn.secondary:hover { border-color: rgba(10, 31, 68, 0.3); background: var(--card); }
 .btn.copper { background: var(--copper); border-color: var(--copper); }
-.btn.copper:hover { background: #a5642f; }
+.btn.copper:hover { background: var(--copper-hover); }
 .btn.danger { background: var(--card); color: var(--crit); border-color: rgba(179, 38, 30, 0.3); }
 .btn.danger:hover { background: var(--crit-wash); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
@@ -272,7 +276,7 @@ textarea.in { height: auto; min-height: 84px; padding: 9px 11px; resize: vertica
 .txtrack { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .txlvl { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; background: var(--card); }
 .txlvl.cur { border-color: var(--copper); box-shadow: 0 0 0 2px rgba(184, 115, 62, 0.12); }
-.txlvl.done { background: #faf9f6; }
+.txlvl.done { background: var(--done-wash); }
 .txlvl.next { opacity: 0.6; }
 .txh b { display: block; font-size: 12.5px; color: var(--navy); }
 .txh span { font-size: 11.5px; color: var(--copper-ink); }
@@ -351,3 +355,75 @@ textarea.in { height: auto; min-height: 84px; padding: 9px 11px; resize: vertica
 table.grid-table th, table.grid-table td { padding-left: 10px; padding-right: 10px; }
 table.grid-table th:first-child, table.grid-table td:first-child { padding-left: 18px; }
 table.grid-table th:last-child, table.grid-table td:last-child { padding-right: 18px; }
+
+/* ---------------- deadlines in the property summary card */
+.facts .dlb { grid-column: 1 / -1; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 12px 0; }
+.dlb-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.dlb ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.dlb li { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+.dlb li button.dl-open { all: unset; cursor: pointer; display: contents; }
+.dlb .d { font-weight: 600; color: var(--navy); font-variant-numeric: tabular-nums; font-size: 12.5px; line-height: 20px; }
+.dlb .w { min-width: 0; font-size: 13px; line-height: 20px; color: var(--navy); }
+.dlb li .pill { margin-top: 1px; }
+.dlb .w small { display: block; color: var(--faint); font-size: 11.5px; line-height: 16px; }
+.dlb li.past .d, .dlb li.past .w { color: var(--muted); }
+.dlb .edit { display: block; border: 0; background: none; padding: 0; text-align: left; color: inherit; font: inherit; line-height: inherit; cursor: pointer; }
+.dlb .edit:hover { text-decoration: underline; text-underline-offset: 2px; }
+.dlb .more { margin-top: 8px; display: flex; gap: 14px; }
+.dlb .empty { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+/* ---------------- calendar */
+.cal-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.cal-nav { display: flex; align-items: center; gap: 8px; }
+.cal-nav h2 { min-width: 9.5em; }
+.cal-types { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal-types button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.cal-types button[aria-pressed="true"] { color: var(--navy); border-color: rgba(10, 31, 68, 0.3); }
+.cal-types button[aria-pressed="false"] { opacity: 0.55; text-decoration: line-through; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.window { background: var(--copper); }
+.dot.hearing { background: var(--navy); }
+.dot.evidence { background: var(--warn); }
+.dot.filing { background: var(--crit); }
+.dot.other { background: var(--slate); }
+.dot.task { background: var(--ok); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cal-grid .dow { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 8px 8px 6px; border-bottom: 1px solid var(--line); }
+.cal-day { min-height: 112px; border-right: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2); padding: 6px 6px 8px; min-width: 0; }
+.cal-day:nth-child(7n) { border-right: 0; }
+.cal-day.out { background: var(--done-wash); }
+.cal-day.out .n { color: var(--faint); }
+.cal-day .n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; display: inline-block; min-width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 50%; }
+.cal-day.today .n { background: var(--navy); color: #fff; font-weight: 600; }
+.cal-day ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.cal-day li { min-width: 0; overflow: hidden; }
+.ev { display: flex; gap: 5px; align-items: baseline; font-size: 11.5px; line-height: 1.3; color: var(--navy); text-decoration: none; min-width: 0; }
+.ev .dot { position: relative; top: -1px; }
+.ev span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ev.done span.t { text-decoration: line-through; color: var(--faint); }
+a.ev:hover span.t { text-decoration: underline; }
+.cal-day .more { font-size: 11px; color: var(--copper-ink); border: 0; background: none; padding: 0; text-decoration: underline; }
+.cal-list { display: grid; }
+.cal-list .day { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; padding: 12px 18px; border-top: 1px solid var(--line-2); }
+.cal-list .day:first-child { border-top: 0; }
+.cal-list .day.today { background: var(--copper-wash); }
+.cal-list .dh { font-size: 12.5px; color: var(--navy); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cal-list .dh small { display: block; font-weight: 400; color: var(--faint); }
+.cal-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cal-list li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 13px; }
+.cal-list li .s { font-size: 11.5px; color: var(--faint); display: block; }
+.cal-list li .who { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.cal-list li.done .t { text-decoration: line-through; color: var(--faint); }
+.cal-legend { font-size: 11.5px; color: var(--faint); padding: 10px 18px; border-top: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .cal-day { min-height: 64px; padding: 4px; }
+  .ev span.t { display: none; }
+  .cal-list .day { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* ---------------- reference data (super admin) */
+.ref-import { display: grid; gap: 8px; }
+.ref-import textarea { width: 100%; min-height: 120px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--line); border-radius: var(--r); padding: 8px; background: var(--card); }
+.ref-errors { margin: 6px 0 0; padding-left: 18px; color: var(--crit); font-size: 12px; }
+.banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--r); font-size: 12.5px; margin-bottom: 14px; }
+.banner.copper { background: var(--copper-wash); color: var(--copper-ink); border: 1px solid var(--copper-line); }

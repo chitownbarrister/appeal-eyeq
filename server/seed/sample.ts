@@ -12,7 +12,7 @@ import { PASSWORD_MIN_LENGTH } from "../auth.js";
 import { readCsv, toIsoDate, blankToNull } from "./csv.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
-import type { AppealStatus, Level, Substage } from "../../shared/domain.js";
+import { DEFAULT_FEES, type AppealStatus, type Level, type Substage } from "../../shared/domain.js";
 
 const SEED_DIR = path.resolve(process.cwd(), "db", "seed", "sample");
 const FIRM_SLUG = "nichols-law";
@@ -97,11 +97,108 @@ export async function seedSampleData(log: (msg: string) => void = console.log): 
       `UPDATE firms SET letterhead_name = 'Nichols Law' WHERE id = $1`,
       [firmId],
     );
-    const accountIds = await seedAccounts(c, firmId, userIds);
-    const propertyIds = await seedProperties(c, firmId, userIds, accountIds);
-    await seedAppeals(c, firmId, userIds, propertyIds);
+    await seedFirmContent(c, firmId, userIds);
   });
   log("Sample data: Nichols Law created (sample only)");
+}
+
+/** Clients, properties, appeals, tasks and deadlines for the sample firm. */
+async function seedFirmContent(c: pg.PoolClient, firmId: number, userIds: Record<string, number>): Promise<void> {
+  const accountIds = await seedAccounts(c, firmId, userIds);
+  const propertyIds = await seedProperties(c, firmId, userIds, accountIds);
+  await seedAppeals(c, firmId, userIds, propertyIds);
+  await seedWorkItems(c, firmId, userIds, propertyIds);
+}
+
+/**
+ * Puts the sample firm back to its starting data: deletes every client,
+ * property, appeal, contact, task and deadline, restores the default fees,
+ * and loads the sample set again. Users, permissions and the audit trail
+ * are kept. Runs as the signed-in firm user, so the tenant lock applies,
+ * and refuses any firm not flagged as a sample.
+ */
+export async function resetSampleFirm(c: pg.PoolClient, firmId: number): Promise<void> {
+  const firm = (await c.query<{ is_sample: boolean }>(`SELECT is_sample FROM firms WHERE id = $1`, [firmId])).rows[0];
+  if (!firm?.is_sample) throw Object.assign(new Error("not sample"), { status: 403, publicMessage: "Only a sample firm can be reset." });
+  for (const t of ["deadlines", "activities", "contacts", "appeals", "parcels", "properties", "accounts"]) {
+    await c.query(`DELETE FROM ${t} WHERE firm_id = $1`, [firmId]);
+  }
+  for (const f of DEFAULT_FEES) {
+    await c.query(`UPDATE fee_defaults SET percent = $3, basis = $4 WHERE firm_id = $1 AND level = $2`, [firmId, f.level, f.percent, f.basis]);
+  }
+  const users = (await c.query<{ id: number; name: string }>(`SELECT id, name FROM users WHERE firm_id = $1`, [firmId])).rows;
+  const userIds = Object.fromEntries(users.map((u) => [u.name, u.id]));
+  for (const u of USERS) {
+    if (!userIds[u.name]) throw Object.assign(new Error("user"), { status: 409, publicMessage: `The sample user ${u.name} is missing, so the sample data can't be reloaded.` });
+  }
+  await seedFirmContent(c, firmId, userIds);
+}
+
+// Dated next steps in properties.csv become deadlines or tasks. Window
+// openings and closings are left out: they come from the filing windows.
+function workItemFor(nextAction: string): { kind: "hearing" | "evidence" | "filing" | "task"; title: string; time?: string } | null {
+  if (/window/i.test(nextAction)) return null;
+  const time = nextAction.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  const hhmm = time ? `${String((Number(time[1]) % 12) + (time[3].toUpperCase() === "PM" ? 12 : 0)).padStart(2, "0")}:${time[2]}` : undefined;
+  if (/hearing/i.test(nextAction)) return { kind: "hearing", title: nextAction.replace(/,\s*\d{1,2}:\d{2}\s*(AM|PM)/i, ""), time: hhmm };
+  if (/evidence/i.test(nextAction)) return { kind: "evidence", title: nextAction };
+  if (/filing deadline/i.test(nextAction)) return { kind: "filing", title: nextAction };
+  return { kind: "task", title: nextAction };
+}
+
+async function seedWorkItems(
+  c: pg.PoolClient,
+  firmId: number,
+  userIds: Record<string, number>,
+  properties: Record<string, { id: number; row: Record<string, string> }>,
+): Promise<void> {
+  for (const { id, row } of Object.values(properties)) {
+    const date = blankToNull(row["Next date"]);
+    const item = row["Next action"] && date ? workItemFor(row["Next action"]) : null;
+    if (!item) continue;
+    const appeal = (await c.query<{ id: number; level: string }>(
+      `SELECT id, level FROM appeals WHERE firm_id = $1 AND property_id = $2
+        ORDER BY assessment_year DESC, array_position(ARRAY['assessor','bor','ptab','circuit']::text[], level) DESC LIMIT 1`,
+      [firmId, id],
+    )).rows[0];
+    if (item.kind === "task") {
+      await c.query(
+        `INSERT INTO activities (firm_id, property_id, appeal_id, kind, subject, due_on, assigned_user_id, status)
+         VALUES ($1, $2, $3, 'task', $4, $5, $6, 'open')`,
+        [firmId, id, appeal?.id ?? null, item.title, date, userIds[row.Analyst] ?? null],
+      );
+    } else {
+      await c.query(
+        `INSERT INTO deadlines (firm_id, property_id, appeal_id, kind, title, due_on, due_time, source, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [firmId, id, appeal?.id ?? null, item.kind, item.title, date, item.time ?? null,
+         item.kind === "hearing" ? "notice" : "manual",
+         item.kind === "filing" && /PTAB/.test(item.title) ? "30 days from the Board of Review decision" : null],
+      );
+    }
+  }
+
+  // 1044 Tower Road: the open tasks and parcel record from the prior software's Account Workbook.
+  const tower = properties["05-17-302-010-0000"];
+  if (tower) {
+    await c.query(
+      `UPDATE parcels SET owner_name = 'NICHOLS DILLON / NICHOLS MICHELLE B', class = 'Residential', zip = '60093-1850'
+        WHERE firm_id = $1 AND property_id = $2 AND pin = '05-17-302-010-0000'`,
+      [firmId, tower.id],
+    );
+    const tasks: [string, string, string | null][] = [
+      ["Photos of basement and telephone tile", "Julie Ramos", null],
+      ["Settlement statement", "Julie Ramos", null],
+      ["2026 temporary easement documents", "Julie Ramos", null],
+      ["Request new contingency fee agreement", "Sana Khan", "2025-01-10"],
+    ];
+    for (const [subject, who, due] of tasks) {
+      await c.query(
+        `INSERT INTO activities (firm_id, property_id, kind, subject, due_on, assigned_user_id, status) VALUES ($1, $2, 'task', $3, $4, $5, 'open')`,
+        [firmId, tower.id, subject, due, userIds[who] ?? null],
+      );
+    }
+  }
 }
 
 async function seedSampleReference(): Promise<void> {

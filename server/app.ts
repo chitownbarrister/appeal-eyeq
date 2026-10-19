@@ -33,7 +33,7 @@ export function createApp(): express.Express {
     next();
   });
 
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "4mb" }));
   app.use(loadAuth);
 
   // State-changing API calls must come from our own pages (blocks cross-site form posts).
@@ -94,7 +94,7 @@ export function createApp(): express.Express {
       res.status(409).json({ error: "That already exists. A PIN can only be on one property in your firm." });
       return;
     }
-    if (code === "22P02" || code === "22003" || code === "23514") {
+    if (code === "22P02" || code === "22003" || code === "22007" || code === "22008" || code === "23514") {
       res.status(400).json({ error: "One of the values isn't valid." });
       return;
     }

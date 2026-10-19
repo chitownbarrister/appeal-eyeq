@@ -2,7 +2,12 @@ import fs from "node:fs";
 
 /** Minimal RFC 4180 CSV reader: quoted fields, escaped quotes, CRLF. Returns rows keyed by header. */
 export function readCsv(file: string): Record<string, string>[] {
-  const text = fs.readFileSync(file, "utf8").replace(/^﻿/, "");
+  return parseCsv(fs.readFileSync(file, "utf8"));
+}
+
+/** Same as readCsv, for CSV text already in memory (an upload). */
+export function parseCsv(input: string): Record<string, string>[] {
+  const text = input.replace(/^﻿/, "");
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
@@ -24,6 +29,7 @@ export function readCsv(file: string): Record<string, string>[] {
   }
   if (field !== "" || row.length) { row.push(field); if (row.some((c) => c !== "")) rows.push(row); }
   const [header, ...body] = rows;
+  if (!header) return [];
   return body.map((r) => Object.fromEntries(header.map((h, i) => [h.trim(), (r[i] ?? "").trim()])));
 }
 

@@ -10,6 +10,7 @@ const env = {
   SUPER_ADMIN_PASSWORD: "superadmin-pass-1",
   SEED_SAMPLE_DATA: "true",
   SAMPLE_USER_PASSWORD: "sample-pass-1",
+  APP_TODAY: "2026-10-19", // the sample windows and deadlines are dated around this day
 };
 
 export default defineConfig({

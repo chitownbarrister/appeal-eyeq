@@ -13,6 +13,7 @@ import type { EffectiveFee } from "../../../shared/fees";
 import { AppealSheet, FeeSheet, PropertySheet, type PropertyRecord } from "../components/forms";
 import { ValuesEditor } from "../components/ValuesEditor";
 import { Sheet } from "../components/Sheet";
+import { DeadlinesBlock, DeadlineSheet } from "../components/Deadlines";
 
 export interface AppealRow {
   id: number; property_id: number; parcel_id: number | null; assessment_year: number; tax_year: number; level: Level; substage: Substage;
@@ -28,7 +29,14 @@ export interface AppealRow {
 interface Parcel { id: number; pin: string; alternate_pin: string | null; owner_name: string | null; parcel_type: string; class: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; is_primary: boolean; active: boolean }
 interface Contact { id: number; account_id: number | null; property_id: number | null; name: string; title: string | null; role: string; email: string | null; phone: string | null; mobile: string | null; notes: string | null }
 interface Activity { id: number; kind: string; subject: string; body: string | null; due_on: string | null; status: "open" | "done"; assigned_user_id: number | null; assigned_name: string | null; created_by_name: string | null; created_at: string }
+export interface DeadlineItem {
+  key: string; id: number | null; kind: "hearing" | "evidence" | "filing" | "other" | "window"; title: string; detail: string | null;
+  due_on: string; due_time: string | null; location: string | null; notes: string | null; status: "open" | "done";
+  source: "manual" | "notice" | "computed" | "window"; appeal_id: number | null; days: number;
+}
 interface Detail {
+  deadlines: DeadlineItem[];
+  today: string;
   property: PropertyRecord & { title: string; county: string; township: string | null; account_name: string; attorney_name: string | null; analyst_name: string | null };
   parcels: Parcel[];
   appeals: AppealRow[];
@@ -38,11 +46,11 @@ interface Detail {
   fees: { firstYear: EffectiveFee; refund: EffectiveFee };
 }
 
-type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "deadlines" | "files";
+type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "files";
 const TABS: { id: Tab; label: string; soon?: string }[] = [
   { id: "appeals", label: "Appeals" }, { id: "values", label: "Values" }, { id: "parcels", label: "Parcels" },
   { id: "contacts", label: "Contacts" }, { id: "activities", label: "Activities" },
-  { id: "deadlines", label: "Deadlines", soon: "step 3" }, { id: "files", label: "Files", soon: "step 5" },
+  { id: "files", label: "Files", soon: "step 5" },
 ];
 
 const statusPill = (s: AppealStatus) => (s === "reduced" ? "ok" : s === "waiting_decision" || s === "open" ? "warn" : s === "increased" ? "crit" : "");
@@ -58,6 +66,7 @@ export function Property() {
   const [year, setYear] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(params.get("appeal") ? Number(params.get("appeal")) : null);
   const [sheet, setSheet] = useState<"edit" | "fees" | "appeal" | null>(null);
+  const [deadline, setDeadline] = useState<DeadlineItem | "new" | null>(null);
   const [trackError, setTrackError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -166,7 +175,6 @@ export function Property() {
             </div>
             <dl className="facts">
               <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}</dd></div>
-              <div><dt>Next</dt><dd>{now?.next_action ?? "—"}{now?.next_action_on ? ` · ${formatDate(now.next_action_on)}` : ""}</dd></div>
               <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>
               <div><dt>Analyst</dt><dd>{p.analyst_name ?? "Not assigned"}</dd></div>
               <div><dt>Township</dt><dd>{p.township ?? "Not set"}{p.tax_code ? ` · tax code ${p.tax_code}` : ""}{p.tax_code && !p.tax_code_confirmed ? " (unconfirmed)" : ""}</dd></div>
@@ -175,6 +183,7 @@ export function Property() {
               <div><dt>Target AV</dt><dd className="num">{formatValue(now?.target_av)}</dd></div>
               <div><dt>Achieved savings</dt><dd className="num" style={{ color: "var(--ok)" }}>{formatMoney(achieved)}</dd></div>
               <div><dt>Est. savings now</dt><dd className="num">{now?.estimated_savings ? formatMoney(now.estimated_savings) : "—"}</dd></div>
+              <DeadlinesBlock items={data.deadlines} today={data.today} canEdit={can("appeals.edit")} onAdd={() => setDeadline("new")} onOpen={(d) => setDeadline(d)} />
               <div className="wide">
                 <dt>Fee</dt>
                 <dd>
@@ -218,9 +227,6 @@ export function Property() {
           {tab === "parcels" && <ParcelsTab propertyId={p.id} parcels={data.parcels} canEdit={can("properties.edit")} onChanged={() => void refreshAll()} />}
           {tab === "contacts" && <ContactsTab propertyId={p.id} accountId={p.account_id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void refreshAll()} />}
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
-          {tab === "deadlines" && (
-            <div className="placeholder"><h2>Deadlines arrive with the calendar</h2><p className="muted">Build step 3 adds township filing windows and property-specific deadlines (like PTAB at 30 days from the BOR decision) here and on the Calendar.</p></div>
-          )}
           {tab === "files" && (
             <div className="placeholder"><h2>Files arrive with Dropbox</h2><p className="muted">Build step 5 connects your firm's Dropbox, creates the folder template for this property, and opens documents in your desktop apps.</p></div>
           )}
@@ -249,6 +255,15 @@ export function Property() {
           inherited={{ firstYear: data.fees.firstYear.source === "property" ? "Client or firm" : data.fees.firstYear.percent, refund: data.fees.refund.source === "property" ? "Client or firm" : data.fees.refund.percent }}
           onClose={() => setSheet(null)}
           onSaved={() => { setSheet(null); void refreshAll(); }}
+        />
+      )}
+      {deadline && (
+        <DeadlineSheet
+          propertyId={p.id}
+          appeals={appeals}
+          existing={deadline === "new" ? null : deadline}
+          onClose={() => setDeadline(null)}
+          onSaved={() => { setDeadline(null); void refreshAll(); }}
         />
       )}
       {sheet === "appeal" && (
@@ -352,7 +367,7 @@ function AppealsTab({ appeals, canEdit, onCreate, onOpen }: { appeals: AppealRow
               <tr key={a.id} className="clickable" onClick={() => onOpen(a)} title="Open values">
                 <td className="num">{a.assessment_year}<span className="mn" style={{ display: "block" }}>tax yr {a.tax_year}</span></td>
                 <td style={{ whiteSpace: "nowrap" }}>{LEVEL_LABELS[a.level]}<span className="mn" style={{ display: "block" }}>{SUBSTAGE_LABELS[a.substage]}</span></td>
-                <td><span className={`pill ${statusPill(a.status)}`}>{APPEAL_STATUS_LABELS[a.status]}</span>{a.exclude_from_totals && <span className="mn" style={{ display: "block" }}>Excluded</span>}</td>
+                <td><span className={`pill ${statusPill(a.status)}`}>{APPEAL_STATUS_LABELS[a.status]}</span>{a.exclude_from_totals && <span className="mn" style={{ display: "block" }}>Excluded</span>}{a.reference_update ? <span className="pill copper" style={{ marginTop: 3 }} title="A newer equalizer or rate is published. Open the values to apply it.">Newer rate</span> : null}</td>
                 <td className="num">{formatValue(fmvFromAv(a.orig_av, a.assessment_ratio))}</td>
                 <td className="num">{formatValue(fmvFromAv(a.target_av, a.assessment_ratio))}</td>
                 <td className="num">{formatValue(fmvFromAv(a.resolved_av, a.assessment_ratio))}</td>

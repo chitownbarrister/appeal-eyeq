@@ -9,10 +9,12 @@ import { query, withContext, type DbContext } from "../db.js";
 import { hashPassword, PASSWORD_MIN_LENGTH, requireFirmContext, requirePermission } from "../auth.js";
 import { LEVELS, PERMISSIONS, ROLES } from "../../shared/domain.js";
 import { mattersRouter } from "./matters.js";
+import { calendarRouter } from "./calendar.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
 firmRouter.use(mattersRouter);
+firmRouter.use(calendarRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

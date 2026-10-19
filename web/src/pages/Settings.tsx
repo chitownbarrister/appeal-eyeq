@@ -4,7 +4,7 @@ import { useSession } from "../App";
 import { formatDateTime, titleCase } from "../format";
 import { LEVEL_LABELS, PERMISSIONS, type Level } from "../../../shared/domain";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "audit";
+type Tab = "users" | "fees" | "permissions" | "support" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Users" },
@@ -15,7 +15,9 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export function Settings() {
+  const { me } = useSession();
   const [tab, setTab] = useState<Tab>("users");
+  const tabs = me.firm?.isSample ? [...TABS, { id: "sample" as Tab, label: "Sample data" }] : TABS;
   return (
     <>
       <div className="page-head">
@@ -25,7 +27,7 @@ export function Settings() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
             {t.label}
           </button>
@@ -36,6 +38,7 @@ export function Settings() {
       {tab === "permissions" && <PermissionsTab />}
       {tab === "support" && <SupportTab />}
       {tab === "audit" && <AuditTab />}
+      {tab === "sample" && me.firm?.isSample && <SampleTab />}
     </>
   );
 }
@@ -383,5 +386,49 @@ function AuditTab() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- sample data
+function SampleTab() {
+  const canReset = useCan("properties.delete");
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+  async function reset() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/firm/sample/reset", { method: "POST", body: {} });
+      setDone(true);
+      setConfirm(false);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="card pad" style={{ maxWidth: 720 }}>
+      <h3 style={{ marginBottom: 8 }}>Reset sample data</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        This firm holds sample data only. Resetting deletes every client, property, appeal, contact, task and deadline here, restores the
+        default fees, and loads the sample set again, including anything added to it since. Users, permissions and the audit log stay as
+        they are. Real firms don't have this option.
+      </p>
+      {confirm ? (
+        <div className="confirm">
+          Delete everything in this firm and reload the sample data?
+          <button className="btn small danger" disabled={busy} onClick={() => void reset()}>{busy ? "Resetting" : "Reset sample data"}</button>
+          <button className="btn small secondary" onClick={() => setConfirm(false)}>Keep my changes</button>
+        </div>
+      ) : (
+        <button className="btn secondary" disabled={!canReset} onClick={() => { setDone(false); setConfirm(true); }}>Reset sample data</button>
+      )}
+      {!canReset && <p className="meta">Your role can't delete properties, so it can't reset the sample data.</p>}
+      {done && <div className="ok" role="status">Sample data reloaded.</div>}
+      {error && <div className="error" role="alert">{error}</div>}
+    </section>
   );
 }
