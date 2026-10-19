@@ -50,6 +50,49 @@ test("the dashboard: KPIs, window watch, pipeline, fee forecast and win rates", 
   await expect(page.getByText("5 of 15")).toBeVisible();
 });
 
+test("numbers on the dashboard open the matching properties, and Back returns", async ({ page }) => {
+  await signIn(page);
+  const watch = page.locator("section", { has: page.getByRole("heading", { name: "Window watch" }) });
+  const elk = watch.locator("tbody tr", { hasText: "Elk Grove" });
+  await elk.locator("td").nth(5).getByRole("link").click();
+  await expect(page.getByText("1 of 15")).toBeVisible();
+  await expect(page.locator(".idchip")).toContainText("Elk Grove BOR window: not filed");
+  await expect(page.locator("tbody tr")).toContainText("1700 Busse Rd.");
+  await page.goBack();
+
+  await watch.getByRole("link", { name: "Joliet" }).click();
+  await expect(page).toHaveURL(/township=Joliet/);
+  await expect(page.getByText("2 of 15")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Township" })).toHaveValue("Joliet");
+  await page.goBack();
+
+  const pipeline = page.locator("section", { has: page.getByRole("heading", { name: "Pipeline by level and substage" }) });
+  await pipeline.locator("tbody tr", { hasText: "Board of Review" }).locator("td").nth(1).getByRole("link").click();
+  await expect(page.getByText("4 of 15")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Substage" })).toHaveValue("under_review");
+  await page.goBack();
+
+  await page.getByRole("link", { name: /Fees ready to bill/ }).click();
+  await expect(page.getByText("2 of 15")).toBeVisible();
+  await page.getByRole("button", { name: "Show all properties" }).click();
+  await expect(page.getByText("15 of 15")).toBeVisible();
+  await page.goto("/dashboard");
+
+  const forecast = page.locator("section", { has: page.getByRole("heading", { name: "When fees land" }) });
+  await forecast.getByRole("link", { name: "January 2027: show these properties" }).click();
+  await expect(page.getByText("4 of 15")).toBeVisible();
+  await expect(page.locator(".idchip")).toContainText("Fees expected in January 2027");
+});
+
+test("grid filters live in the address bar", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/properties?county=Kane&status=all");
+  await expect(page.getByText("2 of 15")).toBeVisible();
+  await page.getByRole("combobox", { name: "Asset type" }).selectOption("residential");
+  await expect(page).toHaveURL(/type=residential/);
+  await expect(page.getByText("1 of 15")).toBeVisible();
+});
+
 test("the properties summary strip filters the grid", async ({ page }) => {
   await signIn(page);
   await page.goto("/properties");

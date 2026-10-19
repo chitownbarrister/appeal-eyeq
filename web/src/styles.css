@@ -481,3 +481,16 @@ table.pipeline td, table.pipeline th { white-space: nowrap; }
 }
 table.workload th, table.workload td { padding-left: 12px; padding-right: 12px; }
 table.workload td:first-child { white-space: nowrap; }
+.idchip { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 10px; padding: 8px 10px; background: var(--net-wash); border-radius: var(--r); }
+.idchip b { color: var(--navy); font-weight: 600; }
+/* Numbers on the dashboard that open the matching properties. */
+a.nlink { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.nlink:hover { color: var(--copper-ink); border-bottom-style: solid; }
+a.pill-link { text-decoration: none; }
+a.pill-link:hover { background: var(--copper-wash); color: var(--copper-ink); }
+.chart-wrap g.col.clickable { cursor: pointer; }
+/* PIN above the address, so the street number never reads as part of the PIN. */
+.matter-name { display: block; }
+.matter-name .pin { display: block; font-size: 11px; letter-spacing: 0.02em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pin-head { font-size: 12.5px; letter-spacing: 0.02em; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 8px; }
+.mhead .pin-head + h1 { margin-top: 2px; }

@@ -1,3 +1,4 @@
+import { splitMatterTitle } from "../format";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -31,7 +32,7 @@ export function GlobalSearch() {
       try {
         const r = await api<Results>(`/firm/search?q=${encodeURIComponent(term)}`);
         const next: Item[] = [
-          ...r.properties.map((p) => ({ key: `p${p.id}`, to: `/properties/${p.id}`, label: p.title, sub: p.sub, group: "Properties" })),
+          ...r.properties.map((p) => { const t = splitMatterTitle(p.title); return { key: `p${p.id}`, to: `/properties/${p.id}`, label: t.place, sub: [t.pin ? `PIN ${t.pin}` : null, p.sub].filter(Boolean).join(" · "), group: "Properties" }; }),
           ...r.accounts.map((a) => ({ key: `a${a.id}`, to: `/accounts/${a.id}`, label: a.name, sub: a.city ?? "", group: "Clients" })),
           ...r.appeals.map((a) => ({
             key: `ap${a.id}`, to: `/properties/${a.property_id}?appeal=${a.id}`,

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { api, errorText } from "../api";
 import { useSession } from "../App";
 import { useApi, useFirmUsers } from "../data";
-import { fmvFromAv, formatDate, formatMoney, formatValue, nn, reductionPct, titleCase } from "../format";
+import { fmvFromAv, formatDate, formatMoney, formatValue, nn, reductionPct, splitMatterTitle, titleCase } from "../format";
 import {
   APPEAL_STATUS_LABELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS,
   type AppealStatus, type Level, type Substage,
@@ -146,7 +146,8 @@ export function Property() {
                   {can("appeals.edit") && <button className="btn small" onClick={() => setSheet("appeal")}>+ Appeal</button>}
                 </div>
               </div>
-              <h1>{p.title}</h1>
+              {splitMatterTitle(p.title).pin && <div className="pin-head">PIN {splitMatterTitle(p.title).pin}</div>}
+              <h1>{splitMatterTitle(p.title).place}</h1>
               <div className="dmeta">
                 <span>Client <Link to={`/accounts/${p.account_id}`}>{p.account_name}</Link></span>
                 {data.parcels[0]?.owner_name && <span>Owner of record <b>{data.parcels[0].owner_name}</b></span>}

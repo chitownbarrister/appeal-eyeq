@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useSession } from "../App";
 import { useApi } from "../data";
 import { formatMoney, titleCase } from "../format";
+import { MatterName } from "../components/MatterName";
 import { LEVEL_LABELS, SUBSTAGE_LABELS, type Level, type Substage } from "../../../shared/domain";
 import type { EffectiveFee } from "../../../shared/fees";
 import { AccountSheet, PropertySheet, type AccountRecord } from "../components/forms";
@@ -88,7 +89,7 @@ export function Account() {
                   <tbody>
                     {props.map((p) => (
                       <tr key={p.id} className="clickable" onClick={() => navigate(`/properties/${p.id}`)}>
-                        <td><Link className="mt" to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()}>{p.title}</Link></td>
+                        <td><MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} /></td>
                         <td>{p.county}</td><td>{p.township}</td>
                         <td><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></td>
                         <td>{titleCase(p.asset_type)}</td>

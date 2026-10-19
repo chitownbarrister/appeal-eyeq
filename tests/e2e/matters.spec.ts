@@ -33,7 +33,8 @@ test("property page: year track, appeals and the 2025 BOR at $1,736.12", async (
   await signIn(page);
   await page.goto("/properties");
   await page.getByRole("link", { name: /1044 Tower Road, Winnetka/ }).click();
-  await expect(page.getByRole("heading", { name: "05-17-302-010 – 1044 Tower Road, Winnetka (New Trier)" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "1044 Tower Road, Winnetka (New Trier)" })).toBeVisible();
+  await expect(page.locator(".pin-head")).toHaveText("PIN 05-17-302-010");
   await expect(page.getByText("Board of Review · Appeal filed")).toBeVisible();
   await expect(page.getByRole("button", { name: "2026 · current" })).toBeVisible();
   await page.screenshot({ path: "test-results/property-1044.png", fullPage: true });
@@ -94,7 +95,8 @@ test("creating a property with a new client, then finding it with global search"
   await sheet.getByLabel("Asset type").selectOption("commercial");
   await sheet.getByLabel("Attorney").selectOption({ label: "Marcus Tate" });
   await sheet.getByRole("button", { name: "Create property" }).click();
-  await expect(page.getByRole("heading", { name: "14-28-200-011 – 2800 N. Lake Shore Dr., Chicago (Lake View)" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "2800 N. Lake Shore Dr., Chicago (Lake View)" })).toBeVisible();
+  await expect(page.locator(".pin-head")).toHaveText("PIN 14-28-200-011");
   await expect(page.locator(".facts")).toContainText("Level of assessment25%");
   await expect(page.locator(".txlvl.cur")).toContainText("Assessor");
 

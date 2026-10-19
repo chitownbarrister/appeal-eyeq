@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../data";
 import { clock } from "../components/Deadlines";
+import { splitMatterTitle } from "../format";
 
 type EventType = "window" | "hearing" | "evidence" | "filing" | "other" | "task";
 const TYPES: { id: EventType; label: string }[] = [
@@ -22,6 +23,9 @@ interface CalEvent {
   key: string; type: EventType; date: string; time: string | null; title: string; sub: string; who: string;
   href: string | null; done: boolean; mine: boolean;
 }
+
+/** "1440 Brookdale Rd., Naperville (Lisle) · PIN 07-26-110-009" */
+const pinLast = (title: string) => { const t = splitMatterTitle(title); return t.pin ? `${t.place} · PIN ${t.pin}` : t.place; };
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -70,14 +74,14 @@ export function Calendar() {
     for (const d of data.deadlines) {
       out.push({
         key: `d-${d.id}`, type: d.kind, date: d.due_on, time: d.due_time, title: `${d.title} · ${d.property_short}`,
-        sub: [d.location, d.property_title].filter(Boolean).join(" · "), who: [d.attorney_name, d.analyst_name].filter(Boolean).join(", "),
+        sub: [d.location, pinLast(d.property_title)].filter(Boolean).join(" · "), who: [d.attorney_name, d.analyst_name].filter(Boolean).join(", "),
         href: `/properties/${d.property_id}`, done: d.status === "done", mine: d.mine,
       });
     }
     for (const t of data.tasks) {
       out.push({
         key: `t-${t.id}`, type: "task", date: t.due_on, time: null, title: t.property_short ? `${t.subject} · ${t.property_short}` : t.subject,
-        sub: t.property_title ?? t.account_name ?? "", who: t.assigned_name ?? "Unassigned",
+        sub: t.property_title ? pinLast(t.property_title) : t.account_name ?? "", who: t.assigned_name ?? "Unassigned",
         href: t.property_id ? `/properties/${t.property_id}` : t.account_id ? `/accounts/${t.account_id}` : null, done: t.status === "done", mine: t.mine,
       });
     }

@@ -60,7 +60,7 @@ describe("dashboard figures on the sample data", () => {
 
   it("forecasts Assessor and BOR fees by month, using each property's own fee terms", () => {
     const f = d.forecast;
-    expect(f.months).toEqual([
+    expect(f.months.map(({ ids: _ids, ...m }: { ids: number[] }) => m)).toEqual([
       { month: "2026-10", decided: "15060.00", expected: "0.00" },
       { month: "2026-11", decided: "0.00", expected: "0.00" },
       { month: "2026-12", decided: "0.00", expected: "924.00" },
@@ -83,11 +83,11 @@ describe("dashboard figures on the sample data", () => {
   });
 
   it("analyst workload, reassessment exposure and retention", () => {
-    expect(d.workload).toEqual([
-      { user_id: expect.any(Number), name: "Julie Ramos", open: 8, filedThisCycle: 6, hearings30: 1 },
-      { user_id: expect.any(Number), name: "Sana Khan", open: 6, filedThisCycle: 3, hearings30: 1 },
+    expect(d.workload).toMatchObject([
+      { name: "Julie Ramos", open: 8, filedThisCycle: 6, hearings30: 1 },
+      { name: "Sana Khan", open: 6, filedThisCycle: 3, hearings30: 1 },
     ]);
-    expect(d.reassessment).toEqual({
+    expect(d.reassessment).toMatchObject({
       year: 2027,
       label: "the City of Chicago townships and the collar counties' general reassessment",
       properties: 9,
@@ -95,6 +95,29 @@ describe("dashboard figures on the sample data", () => {
     });
     expect(d.retention.carriedOver).toBe(14);
     expect(d.retention.atRisk.map((r: { short: string }) => r.short)).toEqual(["1300 Sheridan Rd.", "512 Dole Ave.", "2550 Channahon Rd."]);
+  });
+});
+
+describe("links behind the numbers", () => {
+  it("carries the exact property ids for each headline number and table cell", async () => {
+    const list = (await call(env.base, dillon, "GET", "/api/firm/properties")).body.properties as { id: number; address1: string; unfiled_window_open: boolean }[];
+    const idOf = (a: string) => list.find((p) => p.address1 === a)!.id;
+    const sorted = (xs: number[]) => [...xs].sort((a, b) => a - b);
+    expect(sorted(d.links.unfiled)).toEqual(sorted(list.filter((p) => p.unfiled_window_open).map((p) => p.id)));
+    expect(sorted(d.links.readyToBill)).toEqual(sorted([idOf("820 S. Clinton St."), idOf("1300 Sheridan Rd.")]));
+    expect(d.links.forecastSixMonths).toHaveLength(10);
+    const elk = d.windowWatch.find((w: { label: string }) => w.label === "Elk Grove");
+    expect(sorted(elk.tagged_ids)).toEqual(sorted([idOf("1700 Busse Rd."), idOf("2200 Pratt Blvd.")]));
+    expect(elk.unfiled_ids).toEqual([idOf("1700 Busse Rd.")]);
+    const bor = d.pipeline.find((p: { level: string }) => p.level === "bor");
+    expect(bor.cells[0].ids).toHaveLength(4);
+    expect(bor.ids).toHaveLength(11);
+    expect(d.forecast.months.find((m: { month: string }) => m.month === "2027-01").ids).toHaveLength(4);
+    const julie = d.workload.find((w: { name: string }) => w.name === "Julie Ramos");
+    expect(julie.openIds).toHaveLength(8);
+    expect(julie.hearingIds).toEqual([idOf("2550 Channahon Rd.")]);
+    expect(d.reassessment.ids).toHaveLength(9);
+    expect(d.retention.carriedOverIds).toHaveLength(14);
   });
 });
 

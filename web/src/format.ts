@@ -64,3 +64,13 @@ export function nn(v: string | null | undefined): string | null {
 export function cleanNumber(v: string): string {
   return v.replace(/[$,\s]/g, "");
 }
+
+/**
+ * A matter title is "PIN – Address, City (Township)". Shown on screen, the PIN
+ * gets its own line so a street number never reads as part of it.
+ */
+export function splitMatterTitle(title: string): { pin: string | null; place: string } {
+  const i = title.indexOf(" – ");
+  if (i < 0 || !/^[\d-]+$/.test(title.slice(0, i))) return { pin: null, place: title };
+  return { pin: title.slice(0, i), place: title.slice(i + 3) };
+}

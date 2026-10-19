@@ -97,15 +97,15 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     const users = (await c.query<{ id: number; name: string; role: string }>(
       `SELECT id, name, role FROM users WHERE firm_id = $1 AND active ORDER BY name`, [firmId],
     )).rows;
-    const filed = (await c.query<{ analyst_user_id: number | null; n: number }>(
-      `SELECT p.analyst_user_id, count(*)::int AS n FROM appeals a JOIN properties p ON p.firm_id = a.firm_id AND p.id = a.property_id
+    const filed = (await c.query<{ analyst_user_id: number | null; n: number; ids: number[] }>(
+      `SELECT p.analyst_user_id, count(*)::int AS n, array_agg(DISTINCT p.id) AS ids FROM appeals a JOIN properties p ON p.firm_id = a.firm_id AND p.id = a.property_id
         WHERE a.firm_id = $1 AND a.assessment_year = $2
           AND (a.filed_on IS NOT NULL OR a.substage IN ('appeal_filed', 'hearing_scheduled', 'decision_analysis', 'invoice_sent', 'pushed_next_level'))
         GROUP BY p.analyst_user_id`,
       [firmId, cycle],
     )).rows;
-    const hearings = (await c.query<{ analyst_user_id: number | null; n: number }>(
-      `SELECT p.analyst_user_id, count(*)::int AS n FROM deadlines d JOIN properties p ON p.firm_id = d.firm_id AND p.id = d.property_id
+    const hearings = (await c.query<{ analyst_user_id: number | null; n: number; ids: number[] }>(
+      `SELECT p.analyst_user_id, count(*)::int AS n, array_agg(DISTINCT p.id) AS ids FROM deadlines d JOIN properties p ON p.firm_id = d.firm_id AND p.id = d.property_id
         WHERE d.firm_id = $1 AND d.kind = 'hearing' AND d.status = 'open' AND d.due_on BETWEEN $2 AND $3
         GROUP BY p.analyst_user_id`,
       [firmId, today, addDays(today, 30)],
@@ -120,12 +120,16 @@ dashboardRouter.get("/dashboard", async (req, res) => {
          FROM properties p WHERE p.firm_id = $1 AND p.status = 'active'`,
       [firmId, cycle],
     )).rows;
-    const inPlay = (await c.query<{ v: string }>(
-      `SELECT COALESCE(sum(estimated_savings), 0)::numeric(14,2) AS v FROM appeals
+    const inPlay = (await c.query<{ v: string; ids: number[] | null; achieved_ids: number[] | null }>(
+      `SELECT COALESCE(sum(estimated_savings), 0)::numeric(14,2) AS v,
+              array_agg(DISTINCT property_id) FILTER (WHERE estimated_savings > 0) AS ids,
+              (SELECT array_agg(DISTINCT x.property_id) FROM appeals x
+                WHERE x.firm_id = $1 AND x.status = 'reduced' AND x.savings > 0 AND NOT x.exclude_from_totals) AS achieved_ids
+         FROM appeals
         WHERE firm_id = $1 AND NOT exclude_from_totals AND status IN ('open', 'waiting_decision')
           AND substage NOT IN ('invoice_sent', 'pushed_next_level', 'closed')`,
       [firmId],
-    )).rows[0].v;
+    )).rows[0];
     return { cur, activeProps, windows, decided, forecastRows, feeDefaults, users, filed, hearings, history, inPlay };
   });
 
@@ -138,7 +142,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
   const windowWatch = d.windows
     .filter((w) => w.closes_on >= today)
     .map((w) => {
-      const tagged = d.activeProps.filter((p) => inTownship(p, w)).length;
+      const taggedProps = d.activeProps.filter((p) => inTownship(p, w));
       const unfiled = d.cur.filter((p) => inTownship(p, w) && p.level === w.level && p.assessment_year === w.assessment_year && p.substage === "under_review");
       const open = w.opens_on <= today;
       if (open) unfiled.forEach((p) => unfiledIds.add(p.property_id));
@@ -146,7 +150,8 @@ dashboardRouter.get("/dashboard", async (req, res) => {
         id: w.id, label: `${w.township ?? `${w.county} County`}`, county: w.county, level: w.level, levelShort: LEVEL_SHORT[w.level],
         opens_on: w.opens_on, closes_on: w.closes_on, note: w.note, open,
         days_left: daysBetween(today, w.closes_on), days_to_open: open ? 0 : daysBetween(today, w.opens_on),
-        tagged, unfiled: unfiled.length,
+        tagged: taggedProps.length, unfiled: unfiled.length,
+        tagged_ids: taggedProps.map((p) => p.id), unfiled_ids: unfiled.map((p) => p.property_id),
       };
     })
     .filter((w) => w.tagged > 0);
@@ -158,9 +163,10 @@ dashboardRouter.get("/dashboard", async (req, res) => {
       level,
       cells: PIPELINE_SUBSTAGES.map((s) => {
         const q = rows.filter((p) => p.substage === s);
-        return { substage: s, count: q.length, avgDays: q.length ? Math.round(q.reduce((a, p) => a + p.days, 0) / q.length) : null };
+        return { substage: s, count: q.length, avgDays: q.length ? Math.round(q.reduce((a, p) => a + p.days, 0) / q.length) : null, ids: q.map((p) => p.property_id) };
       }),
       total: rows.filter((p) => PIPELINE_SUBSTAGES.includes(p.substage)).length,
+      ids: rows.filter((p) => PIPELINE_SUBSTAGES.includes(p.substage)).map((p) => p.property_id),
     };
   });
   const stalled = d.cur
@@ -238,7 +244,10 @@ dashboardRouter.get("/dashboard", async (req, res) => {
       month: m,
       decided: sum(items.filter((i) => i.kind === "decided" && i.month === m).map((i) => i.fee)),
       expected: sum(items.filter((i) => i.kind === "expected" && i.month === m).map((i) => i.fee)),
+      ids: [...new Set(items.filter((i) => i.month === m).map((i) => i.property_id))],
     })),
+    readyToBillIds: [...new Set(items.filter((i) => i.kind === "decided").map((i) => i.property_id))],
+    nextSixMonthsIds: [...new Set(items.filter((i) => i.month <= months[months.length - 1]).map((i) => i.property_id))],
     later: sum(items.filter((i) => i.month > last).map((i) => i.fee)),
     readyToBill: sum(items.filter((i) => i.kind === "decided").map((i) => i.fee)),
     nextSixMonths: sum(items.filter((i) => i.month <= last).map((i) => i.fee)),
@@ -257,8 +266,11 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     .map((u) => ({
       user_id: u.id, name: u.name,
       open: d.cur.filter((p) => p.analyst_user_id === u.id && !["invoice_sent"].includes(p.substage)).length,
+      openIds: d.cur.filter((p) => p.analyst_user_id === u.id && !["invoice_sent"].includes(p.substage)).map((p) => p.property_id),
       filedThisCycle: d.filed.find((f) => f.analyst_user_id === u.id)?.n ?? 0,
+      filedIds: d.filed.find((f) => f.analyst_user_id === u.id)?.ids ?? [],
       hearings30: d.hearings.find((h) => h.analyst_user_id === u.id)?.n ?? 0,
+      hearingIds: d.hearings.find((h) => h.analyst_user_id === u.id)?.ids ?? [],
     }));
 
   // ---- reassessment exposure next year
@@ -268,6 +280,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     year: nextYear,
     label: reassessmentLabel(nextYear),
     properties: exposed.length,
+    ids: exposed.map((p) => p.id),
     townships: [...new Set(exposed.map((p) => p.township ?? `${p.county} County`))].sort(),
   };
 
@@ -283,6 +296,8 @@ dashboardRouter.get("/dashboard", async (req, res) => {
   const retention = {
     active: d.activeProps.length,
     carriedOver: d.history.filter((h) => h.earlier).length,
+    carriedOverIds: d.history.filter((h) => h.earlier).map((h) => h.property_id),
+    atRiskIds: atRisk.map((r) => r.property_id),
     atRisk,
   };
 
@@ -296,10 +311,18 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     cycle,
     kpis: {
       unfiled: unfiledIds.size,
-      savingsInPlay: d.inPlay,
+      savingsInPlay: d.inPlay.v,
       readyToBill: forecast.readyToBill,
       forecastSixMonths: forecast.nextSixMonths,
       stalled: stalled.length,
+    },
+    // Property ids behind each headline number, so the dashboard can link to exactly those properties.
+    links: {
+      unfiled: [...unfiledIds],
+      inPlay: d.inPlay.ids ?? [],
+      achieved: d.inPlay.achieved_ids ?? [],
+      readyToBill: forecast.readyToBillIds,
+      forecastSixMonths: forecast.nextSixMonthsIds,
     },
     nextClose,
     windowWatch,
