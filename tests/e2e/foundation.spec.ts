@@ -22,7 +22,8 @@ test("an attorney signs in and sees the sample dashboard with exact figures", as
   await expect(page.getByText("Sample data. Nichols Law is a demonstration firm")).toBeVisible();
   await expect(page.getByText("$274,084.32")).toBeVisible();
   await expect(page.getByText("$2,290.20")).toBeVisible();
-  for (const label of ["Dashboard", "Properties", "Accounts", "Calendar", "Decisions", "Billing", "Settings"]) {
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Settings" })).toHaveCount(0);
+  for (const label of ["Dashboard", "Properties", "Accounts", "Calendar", "Decisions", "Billing"]) {
     await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: label })).toBeVisible();
   }
   await page.screenshot({ path: "test-results/dashboard.png", fullPage: true });
@@ -35,7 +36,8 @@ test("a wrong password shows an error", async ({ page }) => {
 
 test("settings: users, fees, permissions and the audit trail work end to end", async ({ page }) => {
   await signIn(page, "dillon@nicholslaw.example", PW);
-  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: /^Account menu for/ }).click();
+  await page.getByRole("menuitem", { name: "Firm settings" }).click();
   await expect(page.getByRole("cell", { name: "julie@nicholslaw.example" })).toBeVisible();
 
   await page.getByRole("tab", { name: "Fee defaults" }).click();
@@ -76,7 +78,8 @@ test("support access: the super admin is locked out until granted, reads are log
   const dillon = await firmCtx.newPage();
   dillon.on("pageerror", (err) => { throw err; });
   await signIn(dillon, "dillon@nicholslaw.example", PW);
-  await dillon.getByRole("link", { name: "Settings" }).click();
+  await dillon.getByRole("button", { name: /^Account menu for/ }).click();
+  await dillon.getByRole("menuitem", { name: "Firm settings" }).click();
   await dillon.getByRole("tab", { name: "Support access" }).click();
   await dillon.getByLabel("Reason (optional)").fill("Onboarding help");
   await dillon.getByRole("button", { name: "Grant access" }).click();
@@ -127,7 +130,8 @@ test("the super admin creates a firm and its attorney signs in to an empty firm"
 test("signing out returns to the sign-in page, and deep links are guarded", async ({ page }) => {
   await signIn(page, "julie@nicholslaw.example", PW);
   await expect(page.getByText("Nichols Law · Analyst")).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account menu for/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();

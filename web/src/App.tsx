@@ -6,6 +6,7 @@ import { Login } from "./pages/Login";
 import { Shell } from "./components/Shell";
 import { Dashboard } from "./pages/Dashboard";
 import { Settings } from "./pages/Settings";
+import { MyAccount } from "./pages/MyAccount";
 import { Admin } from "./pages/Admin";
 import { Placeholder } from "./pages/Placeholder";
 import { Properties } from "./pages/Properties";
@@ -92,6 +93,7 @@ export function App() {
         {superAdminOutside ? (
           <Routes>
             <Route path="/admin" element={<Admin />} />
+            <Route path="/account" element={<MyAccount />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         ) : (
@@ -106,6 +108,7 @@ export function App() {
             <Route path="/decisions" element={<Placeholder title="Decisions" step={6} detail="Upload a batch of decision letters, review the matches, and apply them." />} />
             <Route path="/billing" element={<Placeholder title="Billing" step={7} detail="Invoices, statements, payments and refunds." />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/account" element={<MyAccount />} />
             {me.user.isSuperAdmin && <Route path="/admin" element={<Admin />} />}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

@@ -4,6 +4,7 @@ import { query, withContext } from "../db.js";
 import {
   clearLoginFailures, clearSessionCookie, createSession, destroySession, loginThrottled,
   readSessionToken, recordLoginFailure, setSessionCookie, verifyPassword, activeGrantId,
+  hashPassword, hashSessionToken, PASSWORD_MIN_LENGTH,
 } from "../auth.js";
 
 export const authRouter = Router();
@@ -88,4 +89,58 @@ authRouter.get("/me", async (req, res) => {
     acting,
     permissions,
   });
+});
+
+const PasswordChange = z.object({ current: z.string().min(1).max(200), next: z.string().max(200) });
+
+/**
+ * Anyone signed in changes their own password. The current password is required (and throttled like
+ * sign-in), every other session for the account ends, and the change is recorded in the firm's audit
+ * log without any password material.
+ */
+authRouter.post("/password", async (req, res) => {
+  const auth = req.auth;
+  if (!auth) {
+    res.status(401).json({ error: "Not signed in" });
+    return;
+  }
+  const parsed = PasswordChange.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Enter your current password and a new one." });
+    return;
+  }
+  const { current, next } = parsed.data;
+  const throttleKey = `password|${auth.user.id}`;
+  if (loginThrottled(throttleKey)) {
+    res.status(429).json({ error: "Too many attempts. Wait 15 minutes and try again." });
+    return;
+  }
+  const row = (await query<{ password_hash: string }>(`SELECT password_hash FROM users WHERE id = $1`, [auth.user.id])).rows[0];
+  if (!row || !verifyPassword(current, row.password_hash)) {
+    recordLoginFailure(throttleKey);
+    res.status(400).json({ error: "Your current password isn't right." });
+    return;
+  }
+  clearLoginFailures(throttleKey);
+  if (next.length < PASSWORD_MIN_LENGTH) {
+    res.status(400).json({ error: `The new password needs at least ${PASSWORD_MIN_LENGTH} characters.` });
+    return;
+  }
+  if (next === current) {
+    res.status(400).json({ error: "The new password is the same as the current one." });
+    return;
+  }
+  await query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [auth.user.id, hashPassword(next)]);
+  const token = readSessionToken(req);
+  await query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2`, [auth.user.id, token ? hashSessionToken(token) : ""]);
+  if (!auth.user.isSuperAdmin && auth.user.firmId) {
+    await withContext({ actorKind: "firm_user", userId: auth.user.id, firmId: auth.user.firmId }, (c) =>
+      c.query(
+        `INSERT INTO audit_log (firm_id, actor_user_id, actor_kind, table_name, row_id, action, before, after)
+         VALUES ($1, $2, 'firm_user', 'users', $3, 'UPDATE', NULL, $4)`,
+        [auth.user.firmId, auth.user.id, String(auth.user.id), { password: "changed" }],
+      ),
+    );
+  }
+  res.json({ ok: true });
 });

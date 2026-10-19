@@ -21,6 +21,9 @@ export function Settings() {
   const { me } = useSession();
   const [params] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === params.get("tab")) ? (params.get("tab") as Tab) : "users"));
+  // Follow ?tab= when it changes, e.g. choosing Integrations from the account menu while already here.
+  const asked = params.get("tab");
+  useEffect(() => { if (asked && TABS.some((t) => t.id === asked)) setTab(asked as Tab); }, [asked]);
   const tabs = me.firm?.isSample ? [...TABS, { id: "sample" as Tab, label: "Sample data" }] : TABS;
   return (
     <>

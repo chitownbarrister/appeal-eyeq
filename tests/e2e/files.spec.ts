@@ -41,7 +41,8 @@ test("firm admins and the Operations role: toggles, role change, and the permiss
   await page.screenshot({ path: "test-results/permissions-operations.png", fullPage: true });
 
   // Julie, an analyst who is now a firm admin, can manage users.
-  await page.getByRole("button", { name: /Sign out/ }).click();
+  await page.getByRole("button", { name: /^Account menu for/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await signIn(page, "julie@nicholslaw.example");
   await page.goto("/settings");
   await expect(page.getByLabel("Role for Sana Khan")).toBeVisible();

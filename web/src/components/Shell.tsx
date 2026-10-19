@@ -5,6 +5,7 @@ import { api } from "../api";
 import { formatDateTime } from "../format";
 import { EyeMark } from "./EyeMark";
 import { GlobalSearch } from "./GlobalSearch";
+import { UserMenu } from "./UserMenu";
 
 const FIRM_NAV = [
   { to: "/dashboard", label: "Dashboard" },
@@ -13,11 +14,10 @@ const FIRM_NAV = [
   { to: "/calendar", label: "Calendar" },
   { to: "/decisions", label: "Decisions" },
   { to: "/billing", label: "Billing" },
-  { to: "/settings", label: "Settings" },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
-  const { me, refresh, logout } = useSession();
+  const { me, refresh } = useSession();
   const navigate = useNavigate();
   const outsideFirm = me.user.isSuperAdmin && !me.acting;
   const nav = outsideFirm ? [{ to: "/admin", label: "Firms & reference data" }] : FIRM_NAV;
@@ -43,13 +43,7 @@ export function Shell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         {outsideFirm ? <span className="sp" /> : <GlobalSearch />}
-        <div className="usermenu">
-          <div className="who">
-            {me.user.name}
-            <small>{me.user.isSuperAdmin ? "Super admin" : `${me.firm?.name} · ${me.user.role === "attorney" ? "Attorney" : "Analyst"}`}</small>
-          </div>
-          <button className="linkbtn" onClick={() => void logout()}>Sign out</button>
-        </div>
+        <UserMenu />
       </header>
       {me.acting && (
         <div className="banner support" role="status">

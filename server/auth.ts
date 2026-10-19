@@ -48,6 +48,10 @@ export function verifyPassword(password: string, stored: string): boolean {
 export const PASSWORD_MIN_LENGTH = 10;
 
 // ---------------------------------------------------------------- sessions
+export function hashSessionToken(token: string): string {
+  return hashToken(token);
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
