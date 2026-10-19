@@ -62,12 +62,15 @@ export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {
   dismissed: "Dismissed",
 };
 
-export const ROLES = ["attorney", "analyst"] as const;
+export const ROLES = ["attorney", "analyst", "operations"] as const;
 export type Role = (typeof ROLES)[number];
 
+/** Operations: non-attorney staff and outside consultants who support a firm. */
+export const ROLE_LABELS: Record<Role, string> = { attorney: "Attorney", analyst: "Analyst", operations: "Operations" };
+
 /**
- * Permission keys. Attorney and Analyst start with every permission; a firm
- * can turn individual ones off per role later (role_permissions table).
+ * Permission keys. Attorney, Analyst and Operations start with every permission;
+ * a firm admin can turn individual ones off per role (role_permissions table).
  */
 export const PERMISSIONS = [
   "properties.edit",
@@ -78,10 +81,9 @@ export const PERMISSIONS = [
   "invoices.send",
   "invoices.void",
   "decisions.apply",
-  "users.manage",
-  "support.grant",
-  "settings.edit",
 ] as const;
+// Managing users, permissions, support access and integrations (Dropbox) belongs to
+// firm admins, a switch on each user rather than a role permission.
 export type Permission = (typeof PERMISSIONS)[number];
 
 /** Default fee terms for a new firm. */
@@ -103,4 +105,14 @@ export function matterTitle(pin: string | null, address: string, city: string | 
   const head = pin ? `${shortPin(pin)} – ` : "";
   const place = [address, city].filter(Boolean).join(", ");
   return `${head}${place}${township ? ` (${township})` : ""}`;
+}
+
+/**
+ * The PIN reduced to its digits, with a Cook PIN's trailing "0000" dropped, so
+ * "05-17-302-010" and "05-17-302-010-0000" are the same parcel. A PIN is the
+ * firm's unique key for a matter (the database enforces it too: parcels.pin_key).
+ */
+export function pinKey(pin: string): string {
+  const digits = pin.replace(/\D/g, "");
+  return digits.length === 14 && digits.endsWith("0000") ? digits.slice(0, 10) : digits;
 }

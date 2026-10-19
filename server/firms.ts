@@ -25,7 +25,7 @@ export async function provisionFirm(input: NewFirmInput): Promise<{ firmId: numb
     );
     const firmId = firm.rows[0].id;
     const user = await client.query<{ id: number }>(
-      `INSERT INTO users (firm_id, email, name, password_hash, role) VALUES ($1, lower($2), $3, $4, $5) RETURNING id`,
+      `INSERT INTO users (firm_id, email, name, password_hash, role, is_firm_admin) VALUES ($1, lower($2), $3, $4, $5, true) RETURNING id`,
       [firmId, input.firstUser.email, input.firstUser.name, hashPassword(input.firstUser.password), input.firstUser.role],
     );
     await client.query(

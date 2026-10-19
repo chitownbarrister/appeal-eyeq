@@ -14,6 +14,7 @@ import { AppealSheet, FeeSheet, PropertySheet, type PropertyRecord } from "../co
 import { ValuesEditor } from "../components/ValuesEditor";
 import { Sheet } from "../components/Sheet";
 import { DeadlinesBlock, DeadlineSheet } from "../components/Deadlines";
+import { FilesTab } from "../components/Files";
 
 export interface AppealRow {
   id: number; property_id: number; parcel_id: number | null; assessment_year: number; tax_year: number; level: Level; substage: Substage;
@@ -50,7 +51,7 @@ type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "files
 const TABS: { id: Tab; label: string; soon?: string }[] = [
   { id: "appeals", label: "Appeals" }, { id: "values", label: "Values" }, { id: "parcels", label: "Parcels" },
   { id: "contacts", label: "Contacts" }, { id: "activities", label: "Activities" },
-  { id: "files", label: "Files", soon: "step 5" },
+  { id: "files", label: "Files" },
 ];
 
 const statusPill = (s: AppealStatus) => (s === "reduced" ? "ok" : s === "waiting_decision" || s === "open" ? "warn" : s === "increased" ? "crit" : "");
@@ -228,9 +229,7 @@ export function Property() {
           {tab === "parcels" && <ParcelsTab propertyId={p.id} parcels={data.parcels} canEdit={can("properties.edit")} onChanged={() => void refreshAll()} />}
           {tab === "contacts" && <ContactsTab propertyId={p.id} accountId={p.account_id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void refreshAll()} />}
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
-          {tab === "files" && (
-            <div className="placeholder"><h2>Files arrive with Dropbox</h2><p className="muted">Build step 5 connects your firm's Dropbox, creates the folder template for this property, and opens documents in your desktop apps.</p></div>
-          )}
+          {tab === "files" && <FilesTab propertyId={p.id} canEdit={can("properties.edit")} />}
         </div>
       </section>
 

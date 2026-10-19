@@ -83,7 +83,7 @@ authRouter.get("/me", async (req, res) => {
   }
 
   res.json({
-    user: { id: u.id, name: u.name, email: u.email, role: u.role, isSuperAdmin: u.isSuperAdmin },
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, isSuperAdmin: u.isSuperAdmin, isFirmAdmin: u.isFirmAdmin },
     firm,
     acting,
     permissions,

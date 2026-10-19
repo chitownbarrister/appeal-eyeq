@@ -126,9 +126,9 @@ describe("login and sessions", () => {
     const cookie = await login("dillon@nicholslaw.example", PW);
     const me = await api(cookie, "GET", "/api/auth/me");
     expect(me.status).toBe(200);
-    expect(me.body.user).toMatchObject({ name: "Dillon Nichols", role: "attorney", isSuperAdmin: false });
+    expect(me.body.user).toMatchObject({ name: "Dillon Nichols", role: "attorney", isSuperAdmin: false, isFirmAdmin: true });
     expect(me.body.firm).toMatchObject({ name: "Nichols Law", isSample: true });
-    expect(me.body.permissions).toHaveLength(11);
+    expect(me.body.permissions).toHaveLength(8);
     await api(cookie, "POST", "/api/auth/logout", {});
     expect((await api(cookie, "GET", "/api/auth/me")).status).toBe(401);
   });
@@ -280,10 +280,14 @@ describe("roles, permissions and audit", () => {
     const julie = await login("julie@nicholslaw.example", PW);
     const newUser = { name: "Temp Person", email: "temp@nicholslaw.example", role: "analyst", password: "temp-pass-123" };
 
-    expect((await api(dillon, "PUT", "/api/firm/permissions", { role: "analyst", permission: "users.manage", allowed: false })).status).toBe(200);
+    const account = { name: "Permission Probe LLC", accountType: "entity" };
+    expect((await api(dillon, "PUT", "/api/firm/permissions", { role: "analyst", permission: "accounts.edit", allowed: false })).status).toBe(200);
+    expect((await api(julie, "POST", "/api/firm/accounts", account)).status).toBe(403);
+    expect((await api(dillon, "PUT", "/api/firm/permissions", { role: "analyst", permission: "accounts.edit", allowed: true })).status).toBe(200);
+    expect((await api(julie, "POST", "/api/firm/accounts", account)).status).toBe(201);
+    // Adding users belongs to firm admins, not to a role permission.
     expect((await api(julie, "POST", "/api/firm/users", newUser)).status).toBe(403);
-    expect((await api(dillon, "PUT", "/api/firm/permissions", { role: "analyst", permission: "users.manage", allowed: true })).status).toBe(200);
-    expect((await api(julie, "POST", "/api/firm/users", newUser)).status).toBe(201);
+    expect((await api(dillon, "POST", "/api/firm/users", newUser)).status).toBe(201);
   });
 
   it("deactivating a user ends their session", async () => {

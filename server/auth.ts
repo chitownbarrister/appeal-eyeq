@@ -1,7 +1,7 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { query, withContext, type DbContext } from "./db.js";
-import type { Permission } from "../shared/domain.js";
+import type { Permission, Role } from "../shared/domain.js";
 
 export const SESSION_COOKIE = "aeq_session";
 const SESSION_IDLE_HOURS = 12;
@@ -11,8 +11,9 @@ export interface AuthUser {
   firmId: number | null;
   email: string;
   name: string;
-  role: "attorney" | "analyst" | null;
+  role: Role | null;
   isSuperAdmin: boolean;
+  isFirmAdmin: boolean;
 }
 
 export interface AuthState {
@@ -92,13 +93,13 @@ export async function loadAuth(req: Request, _res: Response, next: NextFunction)
   if (!token) return next();
   const { rows } = await query<{
     session_id: number; acting_firm_id: number | null; id: number; firm_id: number | null; email: string;
-    name: string; role: "attorney" | "analyst" | null; is_super_admin: boolean; firm_status: string | null;
+    name: string; role: Role | null; is_super_admin: boolean; is_firm_admin: boolean; firm_status: string | null;
   }>(
     `UPDATE sessions s SET last_seen_at = now(), expires_at = now() + make_interval(hours => $2)
        FROM users u LEFT JOIN firms f ON f.id = u.firm_id
       WHERE s.token_hash = $1 AND s.expires_at > now() AND u.id = s.user_id AND u.active
       RETURNING s.id AS session_id, s.acting_firm_id, u.id, u.firm_id, u.email, u.name, u.role,
-                u.is_super_admin, f.status AS firm_status`,
+                u.is_super_admin, u.is_firm_admin, f.status AS firm_status`,
     [hashToken(token), SESSION_IDLE_HOURS],
   );
   const row = rows[0];
@@ -108,7 +109,7 @@ export async function loadAuth(req: Request, _res: Response, next: NextFunction)
       actingFirmId: row.acting_firm_id,
       user: {
         id: row.id, firmId: row.firm_id, email: row.email, name: row.name,
-        role: row.role, isSuperAdmin: row.is_super_admin,
+        role: row.role, isSuperAdmin: row.is_super_admin, isFirmAdmin: row.is_firm_admin && !row.is_super_admin,
       },
     };
   }
@@ -233,4 +234,25 @@ export function recordLoginFailure(key: string): void {
 
 export function clearLoginFailures(key: string): void {
   attempts.delete(key);
+}
+
+/**
+ * Firm admins manage users, roles and permissions, support access and
+ * integrations. The super admin never writes, so it never passes.
+ */
+export function requireFirmAdmin(req: Request, res: Response, next: NextFunction): void {
+  const auth = req.auth;
+  if (!auth || !req.ctx) {
+    res.status(401).json({ error: "Not signed in" });
+    return;
+  }
+  if (auth.user.isSuperAdmin) {
+    res.status(403).json({ error: "Support access is read-only." });
+    return;
+  }
+  if (!auth.user.isFirmAdmin) {
+    res.status(403).json({ error: "Only a firm admin can do that." });
+    return;
+  }
+  next();
 }

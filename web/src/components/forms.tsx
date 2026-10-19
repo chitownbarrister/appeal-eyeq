@@ -2,7 +2,8 @@
 // terms, and new appeal. Each posts to the API and calls onSaved.
 
 import { useMemo, useState } from "react";
-import { api, errorText } from "../api";
+import { Link } from "react-router-dom";
+import { api, ApiError, errorText } from "../api";
 import { useCounties, useFirmUsers } from "../data";
 import { cleanNumber, nn } from "../format";
 import { LEVELS, LEVEL_LABELS, type Level } from "../../../shared/domain";
@@ -28,10 +29,15 @@ export interface AccountRecord {
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const intOrNull = (v: string) => (v.trim() === "" ? null : Number(cleanNumber(v)));
 
-function SaveFooter({ busy, label, onClose, error }: { busy: boolean; label: string; onClose: () => void; error: string }) {
+function SaveFooter({ busy, label, onClose, error, existingPropertyId }: { busy: boolean; label: string; onClose: () => void; error: string; existingPropertyId?: number | null }) {
   return (
     <>
-      {error && <span className="error" role="alert" style={{ margin: 0, flexBasis: "100%" }}>{error}</span>}
+      {error && (
+        <span className="error" role="alert" style={{ margin: 0, flexBasis: "100%" }}>
+          {error}
+          {existingPropertyId ? <> <Link to={`/properties/${existingPropertyId}`} onClick={onClose}>Open that property</Link></> : null}
+        </span>
+      )}
       <span className="sp" />
       <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
       <button type="submit" className="btn" disabled={busy}>{busy ? "Saving" : label}</button>
@@ -66,6 +72,7 @@ export function PropertySheet({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [existingPropertyId, setExistingPropertyId] = useState<number | null>(null);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const countyTownships = useMemo(() => townships.filter((t) => String(t.county_id) === f.countyId).sort((a, b) => a.name.localeCompare(b.name)), [townships, f.countyId]);
   const countyName = counties.find((c) => String(c.id) === f.countyId)?.name;
@@ -104,6 +111,7 @@ export function PropertySheet({
       }
     } catch (err) {
       setError(errorText(err));
+      setExistingPropertyId(err instanceof ApiError && typeof err.body?.existingPropertyId === "number" ? err.body.existingPropertyId : null);
     } finally {
       setBusy(false);
     }
@@ -115,7 +123,7 @@ export function PropertySheet({
       title={existing ? existing.name : "New property"}
       onClose={onClose}
       onSubmit={() => void save()}
-      footer={<SaveFooter busy={busy} label={existing ? "Save changes" : "Create property"} onClose={onClose} error={error} />}
+      footer={<SaveFooter busy={busy} label={existing ? "Save changes" : "Create property"} onClose={onClose} error={error} existingPropertyId={existingPropertyId} />}
     >
       <div className="fld">
         <label htmlFor="pf-client">Client</label>

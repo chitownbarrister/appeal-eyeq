@@ -43,6 +43,8 @@ export function createApp(): express.Express {
     // browsers preflight cross-site DELETEs, which this server never approves.
     const hasBody = Number(req.headers["content-length"] || 0) > 0 || req.headers["transfer-encoding"] !== undefined;
     if (req.method === "DELETE" && !hasBody) return next();
+    // File uploads send the raw file. Browsers preflight a cross-site octet-stream POST, which this server never approves.
+    if (req.method === "POST" && /^\/firm\/properties\/\d+\/files\/upload$/.test(req.path) && req.is("application/octet-stream")) return next();
     if (!req.is("application/json")) {
       res.status(415).json({ error: "Send JSON." });
       return;
@@ -74,9 +76,9 @@ export function createApp(): express.Express {
 
   // Errors: log the route and error type only, never request bodies or client data.
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
-    const e = err as { status?: number; publicMessage?: string; code?: string };
+    const e = err as { status?: number; publicMessage?: string; code?: string; extra?: Record<string, unknown> };
     if (e?.status && e.publicMessage) {
-      res.status(e.status).json({ error: e.publicMessage });
+      res.status(e.status).json({ error: e.publicMessage, ...(e.extra ?? {}) });
       return;
     }
     const name = err instanceof Error ? err.name : "Error";

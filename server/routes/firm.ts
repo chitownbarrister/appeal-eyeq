@@ -6,17 +6,19 @@
 import { Router } from "express";
 import { z } from "zod";
 import { query, withContext, type DbContext } from "../db.js";
-import { hashPassword, PASSWORD_MIN_LENGTH, requireFirmContext, requirePermission } from "../auth.js";
+import { hashPassword, PASSWORD_MIN_LENGTH, requireFirmAdmin, requireFirmContext, requirePermission } from "../auth.js";
 import { LEVELS, PERMISSIONS, ROLES } from "../../shared/domain.js";
 import { mattersRouter } from "./matters.js";
 import { calendarRouter } from "./calendar.js";
 import { dashboardRouter } from "./dashboard.js";
+import { filesRouter } from "./files.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
 firmRouter.use(mattersRouter);
 firmRouter.use(calendarRouter);
 firmRouter.use(dashboardRouter);
+firmRouter.use(filesRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {
@@ -63,7 +65,7 @@ firmRouter.get("/summary", async (req, res) => {
 // ---------------------------------------------------------------- users
 firmRouter.get("/users", async (req, res) => {
   const { rows } = await query(
-    `SELECT id, name, email, role, active, created_at FROM users WHERE firm_id = $1 ORDER BY active DESC, name`,
+    `SELECT id, name, email, role, is_firm_admin, active, created_at FROM users WHERE firm_id = $1 ORDER BY active DESC, name`,
     [req.ctx!.firmId],
   );
   res.json({ users: rows });
@@ -73,10 +75,11 @@ const NewUser = z.object({
   name: z.string().trim().min(1).max(120),
   email: z.string().trim().email().max(200),
   role: z.enum(ROLES),
+  isFirmAdmin: z.boolean().optional(),
   password: z.string().min(PASSWORD_MIN_LENGTH).max(200),
 });
 
-firmRouter.post("/users", requirePermission("users.manage"), async (req, res) => {
+firmRouter.post("/users", requireFirmAdmin, async (req, res) => {
   const parsed = NewUser.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: `Name, a valid email, a role, and a password of at least ${PASSWORD_MIN_LENGTH} characters are required.` });
@@ -88,17 +91,17 @@ firmRouter.post("/users", requirePermission("users.manage"), async (req, res) =>
     return;
   }
   const { rows } = await query(
-    `INSERT INTO users (firm_id, email, name, password_hash, role) VALUES ($1, lower($2), $3, $4, $5)
-     RETURNING id, name, email, role, active, created_at`,
-    [req.ctx!.firmId, parsed.data.email, parsed.data.name, hashPassword(parsed.data.password), parsed.data.role],
+    `INSERT INTO users (firm_id, email, name, password_hash, role, is_firm_admin) VALUES ($1, lower($2), $3, $4, $5, $6)
+     RETURNING id, name, email, role, is_firm_admin, active, created_at`,
+    [req.ctx!.firmId, parsed.data.email, parsed.data.name, hashPassword(parsed.data.password), parsed.data.role, parsed.data.isFirmAdmin ?? false],
   );
   await auditUserChange(req.ctx!, rows[0].id, "INSERT", null, rows[0]);
   res.status(201).json({ user: rows[0] });
 });
 
-const UpdateUser = z.object({ role: z.enum(ROLES).optional(), active: z.boolean().optional() });
+const UpdateUser = z.object({ role: z.enum(ROLES).optional(), active: z.boolean().optional(), isFirmAdmin: z.boolean().optional() });
 
-firmRouter.patch("/users/:id", requirePermission("users.manage"), async (req, res) => {
+firmRouter.patch("/users/:id", requireFirmAdmin, async (req, res) => {
   const parsed = UpdateUser.safeParse(req.body);
   const id = Number(req.params.id);
   if (!parsed.success || !Number.isInteger(id)) {
@@ -109,11 +112,24 @@ firmRouter.patch("/users/:id", requirePermission("users.manage"), async (req, re
     res.status(400).json({ error: "You can't deactivate your own account." });
     return;
   }
-  const before = (await query(`SELECT id, name, email, role, active FROM users WHERE id = $1 AND firm_id = $2`, [id, req.ctx!.firmId])).rows[0];
+  const before = (await query(`SELECT id, name, email, role, is_firm_admin, active FROM users WHERE id = $1 AND firm_id = $2`, [id, req.ctx!.firmId])).rows[0];
+  if (!before) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+  // A firm always keeps at least one active firm admin.
+  const losesAdmin = before.is_firm_admin && before.active && (parsed.data.isFirmAdmin === false || parsed.data.active === false);
+  if (losesAdmin) {
+    const others = await query(`SELECT 1 FROM users WHERE firm_id = $1 AND id <> $2 AND is_firm_admin AND active`, [req.ctx!.firmId, id]);
+    if (!others.rowCount) {
+      res.status(400).json({ error: "The firm needs at least one active firm admin. Make someone else a firm admin first." });
+      return;
+    }
+  }
   const { rows } = await query(
-    `UPDATE users SET role = COALESCE($3, role), active = COALESCE($4, active)
-      WHERE id = $1 AND firm_id = $2 RETURNING id, name, email, role, active, created_at`,
-    [id, req.ctx!.firmId, parsed.data.role ?? null, parsed.data.active ?? null],
+    `UPDATE users SET role = COALESCE($3, role), active = COALESCE($4, active), is_firm_admin = COALESCE($5, is_firm_admin)
+      WHERE id = $1 AND firm_id = $2 RETURNING id, name, email, role, is_firm_admin, active, created_at`,
+    [id, req.ctx!.firmId, parsed.data.role ?? null, parsed.data.active ?? null, parsed.data.isFirmAdmin ?? null],
   );
   if (!rows[0]) {
     res.status(404).json({ error: "User not found." });
@@ -128,8 +144,8 @@ firmRouter.patch("/users/:id", requirePermission("users.manage"), async (req, re
 async function auditUserChange(ctx: DbContext, userId: number, action: "INSERT" | "UPDATE", before: unknown, after: unknown): Promise<void> {
   const strip = (u: unknown) => {
     if (!u || typeof u !== "object") return null;
-    const { id, name, email, role, active } = u as Record<string, unknown>;
-    return { id, name, email, role, active };
+    const { id, name, email, role, is_firm_admin, active } = u as Record<string, unknown>;
+    return { id, name, email, role, is_firm_admin, active };
   };
   await withContext(ctx, (c) =>
     c.query(
@@ -150,17 +166,13 @@ firmRouter.get("/permissions", async (req, res) => {
 
 const PermissionChange = z.object({ role: z.enum(ROLES), permission: z.enum(PERMISSIONS), allowed: z.boolean() });
 
-firmRouter.put("/permissions", requirePermission("users.manage"), async (req, res) => {
+firmRouter.put("/permissions", requireFirmAdmin, async (req, res) => {
   const parsed = PermissionChange.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid permission change." });
     return;
   }
   const { role, permission, allowed } = parsed.data;
-  if (!allowed && permission === "users.manage" && role === req.auth!.user.role) {
-    res.status(400).json({ error: "You can't remove user management from your own role." });
-    return;
-  }
   await withContext(req.ctx!, (c) =>
     c.query(
       `INSERT INTO role_permissions (firm_id, role, permission, allowed) VALUES ($1, $2, $3, $4)
@@ -219,7 +231,7 @@ firmRouter.get("/support-grants", async (req, res) => {
 
 const NewGrant = z.object({ hours: z.number().int().min(1).max(72), reason: z.string().trim().max(500).optional() });
 
-firmRouter.post("/support-grants", requirePermission("support.grant"), async (req, res) => {
+firmRouter.post("/support-grants", requireFirmAdmin, async (req, res) => {
   const parsed = NewGrant.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Choose between 1 and 72 hours." });
@@ -242,7 +254,7 @@ firmRouter.post("/support-grants", requirePermission("support.grant"), async (re
   res.status(201).json({ grant });
 });
 
-firmRouter.post("/support-grants/:id/revoke", requirePermission("support.grant"), async (req, res) => {
+firmRouter.post("/support-grants/:id/revoke", requireFirmAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const result = await withContext(req.ctx!, (c) =>
     c.query(

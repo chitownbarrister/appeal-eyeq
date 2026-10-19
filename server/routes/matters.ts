@@ -9,7 +9,7 @@ import type pg from "pg";
 import { z } from "zod";
 import { withContext } from "../db.js";
 import { requirePermission } from "../auth.js";
-import { LEVELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, type Level } from "../../shared/domain.js";
+import { LEVELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, pinKey, type Level } from "../../shared/domain.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js";
@@ -72,6 +72,29 @@ function sumParts(parts: (string | null | undefined)[]): string | null {
   const present = parts.filter((p): p is string => p !== null && p !== undefined);
   if (present.length === 0) return null;
   return centsToString(present.reduce((a, p) => a + toCents(p), 0n));
+}
+
+/**
+ * One matter per PIN: refuses a PIN another property (or another parcel) in the firm already uses,
+ * and says which matter has it.
+ */
+async function assertPinFree(c: pg.PoolClient, firmId: number, pin: string, exceptParcelId: number | null = null): Promise<void> {
+  const key = pinKey(pin);
+  if (!key) throw Object.assign(new Error("pin"), { status: 400, publicMessage: "Enter a PIN with its digits." });
+  const hit = (await c.query<{ property_id: number; pin: string; address1: string | null; name: string; city: string | null; township: string | null }>(
+    `SELECT x.property_id, x.pin, p.address1, p.name, p.city, t.name AS township
+       FROM parcels x JOIN properties p ON p.firm_id = x.firm_id AND p.id = x.property_id
+       LEFT JOIN townships t ON t.id = p.township_id
+      WHERE x.firm_id = $1 AND x.pin_key = $2 AND ($3::int IS NULL OR x.id <> $3) LIMIT 1`,
+    [firmId, key, exceptParcelId],
+  )).rows[0];
+  if (hit) {
+    throw Object.assign(new Error("dupe pin"), {
+      status: 409,
+      publicMessage: `PIN ${hit.pin} is already the matter ${matterTitle(hit.pin, hit.address1 || hit.name, hit.city, hit.township)}. Open that property instead of adding it again.`,
+      extra: { existingPropertyId: hit.property_id },
+    });
+  }
 }
 
 // ================================================================ properties
@@ -196,6 +219,7 @@ mattersRouter.post("/properties", requirePermission("properties.edit"), async (r
         [firmId, d.newAccount.name, d.newAccount.accountType],
       )).rows[0].id;
     }
+    await assertPinFree(c, firmId, d.pin);
     const county = (await c.query<{ name: string }>(`SELECT name FROM counties WHERE id = $1`, [d.countyId])).rows[0];
     if (!county) throw Object.assign(new Error("county"), { status: 400, publicMessage: "Unknown county." });
     if (d.townshipId) {
@@ -415,6 +439,7 @@ mattersRouter.post("/properties/:id/parcels", requirePermission("properties.edit
   const row = await withContext(req.ctx!, async (c) => {
     const p = await c.query(`SELECT 1 FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]);
     if (!p.rowCount) return null;
+    await assertPinFree(c, req.ctx!.firmId!, d.pin);
     return (await c.query(
       `INSERT INTO parcels (firm_id, property_id, pin, alternate_pin, owner_name, parcel_type, class, address, city, state, zip)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -436,11 +461,12 @@ mattersRouter.patch("/parcels/:id", requirePermission("properties.edit"), async 
   const map: Record<string, string> = { pin: "pin", alternatePin: "alternate_pin", ownerName: "owner_name", parcelType: "parcel_type", class: "class", address: "address", city: "city", state: "state", zip: "zip", active: "active" };
   const changes = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
   if (!changes.length) return bad(res, "Nothing to change.");
-  const r = await withContext(req.ctx!, (c) =>
-    c.query(`UPDATE parcels SET ${changes.map(([k], i) => `${map[k]} = $${i + 3}`).join(", ")} WHERE firm_id = $1 AND id = $2 RETURNING *`, [
+  const r = await withContext(req.ctx!, async (c) => {
+    if (parsed.data.pin) await assertPinFree(c, req.ctx!.firmId!, parsed.data.pin, pid);
+    return c.query(`UPDATE parcels SET ${changes.map(([k], i) => `${map[k]} = $${i + 3}`).join(", ")} WHERE firm_id = $1 AND id = $2 RETURNING *`, [
       req.ctx!.firmId, pid, ...changes.map(([, v]) => v),
-    ]),
-  );
+    ]);
+  });
   if (!r.rowCount) {
     res.status(404).json({ error: "Parcel not found." });
     return;

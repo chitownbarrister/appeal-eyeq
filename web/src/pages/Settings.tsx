@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useSession } from "../App";
 import { formatDateTime, titleCase } from "../format";
-import { LEVEL_LABELS, PERMISSIONS, type Level } from "../../../shared/domain";
+import { LEVEL_LABELS, PERMISSIONS, ROLES, ROLE_LABELS, type Level, type Role } from "../../../shared/domain";
+import { IntegrationsTab } from "../components/Integrations";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "audit" | "sample";
+type Tab = "users" | "fees" | "permissions" | "support" | "integrations" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Users" },
   { id: "fees", label: "Fee defaults" },
   { id: "permissions", label: "Roles & permissions" },
   { id: "support", label: "Support access" },
+  { id: "integrations", label: "Integrations" },
   { id: "audit", label: "Audit log" },
 ];
 
 export function Settings() {
   const { me } = useSession();
-  const [tab, setTab] = useState<Tab>("users");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === params.get("tab")) ? (params.get("tab") as Tab) : "users"));
   const tabs = me.firm?.isSample ? [...TABS, { id: "sample" as Tab, label: "Sample data" }] : TABS;
   return (
     <>
@@ -37,6 +41,7 @@ export function Settings() {
       {tab === "fees" && <FeesTab />}
       {tab === "permissions" && <PermissionsTab />}
       {tab === "support" && <SupportTab />}
+      {tab === "integrations" && <IntegrationsTab />}
       {tab === "audit" && <AuditTab />}
       {tab === "sample" && me.firm?.isSample && <SampleTab />}
     </>
@@ -53,13 +58,19 @@ function errorText(err: unknown): string {
 }
 
 // ---------------------------------------------------------------- users
-interface UserRow { id: number; name: string; email: string; role: "attorney" | "analyst"; active: boolean }
+interface UserRow { id: number; name: string; email: string; role: Role; is_firm_admin: boolean; active: boolean }
+
+/** Firm admins manage users, roles and permissions, support access and integrations. */
+function useIsFirmAdmin(): boolean {
+  const { me } = useSession();
+  return !me.user.isSuperAdmin && me.user.isFirmAdmin;
+}
 
 function UsersTab() {
   const { me } = useSession();
-  const canManage = useCan("users.manage");
+  const canManage = useIsFirmAdmin();
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [form, setForm] = useState({ name: "", email: "", role: "analyst", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", role: "analyst", password: "", isFirmAdmin: false });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -72,12 +83,12 @@ function UsersTab() {
     try {
       await api("/firm/users", { method: "POST", body: form });
       setNotice(`${form.name} can now sign in with the password you set.`);
-      setForm({ name: "", email: "", role: "analyst", password: "" });
+      setForm({ name: "", email: "", role: "analyst", password: "", isFirmAdmin: false });
       await load();
     } catch (err) { setError(errorText(err)); }
   }
 
-  async function update(id: number, change: Partial<Pick<UserRow, "role" | "active">>) {
+  async function update(id: number, change: Partial<{ role: Role; active: boolean; isFirmAdmin: boolean }>) {
     setError("");
     try { await api(`/firm/users/${id}`, { method: "PATCH", body: change }); await load(); }
     catch (err) { setError(errorText(err)); }
@@ -87,7 +98,7 @@ function UsersTab() {
     <>
       <div className="card pad">
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th /></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Firm admin</th><th>Status</th><th /></tr></thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.id}>
@@ -95,11 +106,20 @@ function UsersTab() {
                 <td className="muted">{u.email}</td>
                 <td>
                   {canManage && u.id !== me.user.id ? (
-                    <select value={u.role} onChange={(e) => void update(u.id, { role: e.target.value as UserRow["role"] })} aria-label={`Role for ${u.name}`}>
-                      <option value="attorney">Attorney</option>
-                      <option value="analyst">Analyst</option>
+                    <select value={u.role} onChange={(e) => void update(u.id, { role: e.target.value as Role })} aria-label={`Role for ${u.name}`}>
+                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                     </select>
-                  ) : titleCase(u.role)}
+                  ) : ROLE_LABELS[u.role] ?? titleCase(u.role)}
+                </td>
+                <td>
+                  {canManage ? (
+                    <button
+                      className={`toggle${u.is_firm_admin ? " on" : ""}`}
+                      aria-label={`Firm admin: ${u.name}`}
+                      aria-pressed={u.is_firm_admin}
+                      onClick={() => void update(u.id, { isFirmAdmin: !u.is_firm_admin })}
+                    />
+                  ) : u.is_firm_admin ? <span className="pill copper">Firm admin</span> : null}
                 </td>
                 <td>{u.active ? <span className="pill green">Active</span> : <span className="pill grey">Inactive</span>}</td>
                 <td className="num">
@@ -123,14 +143,17 @@ function UsersTab() {
             <div className="field">
               <label htmlFor="nu-role">Role</label>
               <select id="nu-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="attorney">Attorney</option>
-                <option value="analyst">Analyst</option>
+                {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
             </div>
+            <label className="check" style={{ alignSelf: "center" }}><input type="checkbox" checked={form.isFirmAdmin} onChange={(e) => setForm({ ...form, isFirmAdmin: e.target.checked })} /> Firm admin</label>
             <div className="field"><label htmlFor="nu-pw">Temporary password</label><input id="nu-pw" type="password" minLength={10} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></div>
             <button className="btn" type="submit">Add user</button>
           </div>
-          <p className="muted small" style={{ marginBottom: 0 }}>At least 10 characters. Email invitations arrive with the email step.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>
+            At least 10 characters. Email invitations arrive with the email step. Operations is for non-attorney staff and outside consultants.
+            Firm admins, whatever their role, manage users, permissions, support access and integrations such as Dropbox.
+          </p>
         </form>
       )}
       {error && <div className="error" role="alert">{error}</div>}
@@ -210,13 +233,10 @@ const PERMISSION_LABELS: Record<string, string> = {
   "invoices.send": "Send invoices and statements",
   "invoices.void": "Void invoices",
   "decisions.apply": "Apply decisions",
-  "users.manage": "Manage users and permissions",
-  "support.grant": "Grant support access",
-  "settings.edit": "Edit firm settings",
 };
 
 function PermissionsTab() {
-  const canManage = useCan("users.manage");
+  const canManage = useIsFirmAdmin();
   const { refresh } = useSession();
   const [rows, setRows] = useState<{ role: string; permission: string; allowed: boolean }[]>([]);
   const [error, setError] = useState("");
@@ -237,14 +257,17 @@ function PermissionsTab() {
 
   return (
     <div className="card pad">
-      <p className="muted small" style={{ marginTop: 0 }}>Attorneys and Analysts start with the same rights. Switch any of them off per role.</p>
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Every role starts with the same rights. A firm admin can switch any of them off per role. Managing users, permissions, support access
+        and integrations isn't listed here: it belongs to firm admins (Users tab).
+      </p>
       <table>
-        <thead><tr><th>Permission</th><th className="num">Attorney</th><th className="num">Analyst</th></tr></thead>
+        <thead><tr><th>Permission</th>{ROLES.map((r) => <th key={r} className="num">{ROLE_LABELS[r]}</th>)}</tr></thead>
         <tbody>
           {PERMISSIONS.map((p) => (
             <tr key={p}>
               <td>{PERMISSION_LABELS[p]}</td>
-              {(["attorney", "analyst"] as const).map((role) => (
+              {ROLES.map((role) => (
                 <td key={role} className="num">
                   <button
                     className={`toggle${allowed(role, p) ? " on" : ""}`}
@@ -268,7 +291,7 @@ function PermissionsTab() {
 interface Grant { id: number; reason: string | null; expires_at: string; revoked_at: string | null; created_at: string; granted_by: string; revoked_by: string | null; active: boolean }
 
 function SupportTab() {
-  const canGrant = useCan("support.grant");
+  const canGrant = useIsFirmAdmin();
   const [grants, setGrants] = useState<Grant[]>([]);
   const [log, setLog] = useState<{ id: number; method: string; path: string; at: string }[]>([]);
   const [hours, setHours] = useState(4);
