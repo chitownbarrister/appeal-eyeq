@@ -67,7 +67,7 @@ test("the folder template, folder guidance, profiles, firm naming and the in-app
   await row(page, "brief draft.docx").click();
   const panel = page.getByRole("complementary", { name: "File: brief draft.docx" });
   await expect(panel.locator("iframe[title='Preview of brief draft.docx']")).toBeVisible();
-  await expect(panel.getByRole("link", { name: "Open in Word" })).toHaveAttribute("href", /dropbox\.test/);
+  await expect(panel.getByRole("link", { name: "Open via Dropbox" })).toHaveAttribute("href", /dropbox\.test/);
 
   // Space hides and shows it, like Quick Look.
   await row(page, "brief draft.docx").focus();
@@ -172,7 +172,7 @@ test("an .eml email reads in the panel", async ({ page }) => {
   await expect(panel.getByRole("heading", { name: "Hearing notice, 05-17-302-010" })).toBeVisible();
   await expect(panel).toContainText("Board of Review <notices@cookcountyboardofreview.example>");
   await expect(panel).toContainText("Your hearing is set for November 3.");
-  await expect(panel.getByRole("link", { name: "Open in Outlook" })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Open via Dropbox" })).toHaveAttribute("title", /Outlook/);
 });
 
 test("search finds a document and opens it on the Files tab", async ({ page }) => {

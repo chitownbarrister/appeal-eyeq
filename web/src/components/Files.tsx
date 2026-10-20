@@ -334,8 +334,7 @@ export function FilesTab({ propertyId, propertyStatus, canEdit, initialPath = ""
                               ...deleteItem(e, can, () => setConfirmDelete(e.relPath)),
                             ] : [
                               { label: "Preview", onClick: () => { setSelected(e.relPath); setPanel("preview"); } },
-                              { label: `Open in ${desktopAppFor(e.name)}`, href: e.webUrl, hint: "Opens Dropbox. Choose Open, then the app" },
-                              { label: "View in Dropbox", href: e.webUrl },
+                              { label: "Open via Dropbox", href: e.webUrl, hint: `Choose Open, then ${desktopAppFor(e.name)}` },
                               { label: "Download", href: `/api/firm/properties/${propertyId}/files/download?${q({ path: e.relPath })}`, download: true },
                               { label: "Profile", onClick: () => { setSelected(e.relPath); setPanel("profile"); } },
                               { label: "Version history", onClick: () => { setSelected(e.relPath); setPanel("versions"); } },
@@ -373,8 +372,8 @@ export function FilesTab({ propertyId, propertyStatus, canEdit, initialPath = ""
       {notice && <div className="ok" role="status">{notice}</div>}
       {error && <div className="error" role="alert">{error}</div>}
       <p className="meta" style={{ marginTop: 10 }}>
-        Click a file to preview it; Space shows and hides the preview, and the arrow keys move through the list. Open in Word, Excel or PowerPoint goes through Dropbox:
-        choose Open, then the app, and press Save as usual. Changes save to the same file in Dropbox, which keeps every earlier version.
+        Click a file to preview it; Space shows and hides the preview, and the arrow keys move through the list. Open via Dropbox shows the file in Dropbox:
+        choose Open, then Word, Excel or PowerPoint, and press Save as usual. Changes save to the same file in Dropbox, which keeps every earlier version.
       </p>
     </div>
   );
@@ -460,8 +459,7 @@ function FilePanel({ propertyId, entry, tab, onTab, onClose, canEdit, types, onC
         <button className="btn small ghost" onClick={onClose} aria-label="Close the file panel">✕</button>
       </div>
       <div className="fpanel-actions">
-        <a className="btn small" href={entry.webUrl} target="_blank" rel="noreferrer" title="Opens Dropbox. Choose Open, then the app">Open in {desktopAppFor(entry.name)}</a>
-        <a className="btn small secondary" href={entry.webUrl} target="_blank" rel="noreferrer">View in Dropbox</a>
+        <a className="btn small" href={entry.webUrl} target="_blank" rel="noreferrer" title={`Opens the file in Dropbox. Choose Open, then ${desktopAppFor(entry.name)}`}>Open via Dropbox</a>
         <a className="btn small secondary" href={`${base}/download?${q({ path: entry.relPath })}`}>Download</a>
       </div>
       <div className="subtabs small" role="tablist">

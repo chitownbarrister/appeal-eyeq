@@ -29,3 +29,27 @@ export function reassessmentLabel(year: number): string {
   const cook = triad === "City" ? "the City of Chicago townships" : triad ? `Cook's ${triad} suburbs` : "";
   return [cook, general ? "the collar counties' general reassessment" : ""].filter(Boolean).join(" and ");
 }
+
+/**
+ * The first year of the reassessment cycle a year falls in. Cook: the triad's base year
+ * stepped by 3 (North: 2025 to 2027 is one cycle). Elsewhere: the general assessment
+ * year stepped by 4. Null when a Cook property's triad isn't known.
+ */
+export function cycleStart(county: string, cookTriad: string | null, year: number): number | null {
+  const base = county === "Cook" ? (cookTriad ? COOK_TRIAD_BASE_YEARS[cookTriad] : undefined) : GENERAL_ASSESSMENT_BASE_YEAR;
+  if (base === undefined) return null;
+  const step = county === "Cook" ? COOK_CYCLE_YEARS : GENERAL_ASSESSMENT_CYCLE_YEARS;
+  return base + Math.floor((year - base) / step) * step;
+}
+
+export function cycleEnd(county: string, cookTriad: string | null, year: number): number | null {
+  const start = cycleStart(county, cookTriad, year);
+  if (start === null) return null;
+  return start + (county === "Cook" ? COOK_CYCLE_YEARS : GENERAL_ASSESSMENT_CYCLE_YEARS) - 1;
+}
+
+/** Whether two assessment years are in the same reassessment cycle (a PTAB decision rolls over within one). */
+export function sameCycle(county: string, cookTriad: string | null, a: number, b: number): boolean {
+  const ca = cycleStart(county, cookTriad, a);
+  return ca !== null && ca === cycleStart(county, cookTriad, b);
+}

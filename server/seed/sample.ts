@@ -10,6 +10,7 @@ import { query, withContext } from "../db.js";
 import { provisionFirm, addFirmUser } from "../firms.js";
 import { PASSWORD_MIN_LENGTH } from "../auth.js";
 import { readCsv, toIsoDate, blankToNull } from "./csv.js";
+import { splitAgreedTotal } from "../../shared/pins.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { DEFAULT_FEES, type AppealStatus, type Level, type Substage } from "../../shared/domain.js";
@@ -107,7 +108,68 @@ async function seedFirmContent(c: pg.PoolClient, firmId: number, userIds: Record
   const accountIds = await seedAccounts(c, firmId, userIds);
   const propertyIds = await seedProperties(c, firmId, userIds, accountIds);
   await seedAppeals(c, firmId, userIds, propertyIds);
+  await seedPins(c, firmId, propertyIds);
   await seedWorkItems(c, firmId, userIds, propertyIds);
+}
+
+/**
+ * Every sample appeal gets a PIN row per parcel, carrying its values. 1415 W. Grand Ave. is the
+ * multi-PIN example: three PINs (one a land-only lot), split the firm's way so each appeal's
+ * totals are exactly what they were.
+ */
+async function seedPins(c: pg.PoolClient, firmId: number, properties: Record<string, { id: number; row: Record<string, string> }>): Promise<void> {
+  const grand = properties["17-08-101-022-0000"];
+  if (grand) {
+    for (const pin of ["17-08-101-023-0000", "17-08-101-024-0000"]) {
+      await c.query(
+        `INSERT INTO parcels (firm_id, property_id, pin, alternate_pin, parcel_type, class, address, city, state, is_primary)
+         VALUES ($1, $2, $3, $3, 'real', NULL, '1415 W. GRAND AVE.', 'CHICAGO', 'IL', false)`,
+        [firmId, grand.id, pin],
+      );
+    }
+  }
+  await c.query(
+    `INSERT INTO appeal_pins (firm_id, appeal_id, parcel_id, on_appeal, orig_land_av, orig_impr_av, orig_av, target_land_av, target_impr_av, target_av,
+                              resolved_land_av, resolved_impr_av, resolved_av)
+     SELECT a.firm_id, a.id, pc.id, true,
+            CASE WHEN one.n = 1 THEN a.orig_land_av END, CASE WHEN one.n = 1 THEN a.orig_impr_av END, CASE WHEN one.n = 1 THEN a.orig_av END,
+            CASE WHEN one.n = 1 THEN a.target_land_av END, CASE WHEN one.n = 1 THEN a.target_impr_av END, CASE WHEN one.n = 1 THEN a.target_av END,
+            CASE WHEN one.n = 1 THEN a.resolved_land_av END, CASE WHEN one.n = 1 THEN a.resolved_impr_av END, CASE WHEN one.n = 1 THEN a.resolved_av END
+       FROM appeals a
+       JOIN parcels pc ON pc.firm_id = a.firm_id AND pc.property_id = a.property_id
+       JOIN LATERAL (SELECT count(*) AS n FROM parcels x WHERE x.firm_id = a.firm_id AND x.property_id = a.property_id) one ON true
+      WHERE a.firm_id = $1
+     ON CONFLICT (firm_id, appeal_id, parcel_id) DO NOTHING`,
+    [firmId],
+  );
+  if (!grand) return;
+  // The building PIN, a smaller building PIN, and a parking lot: land and building as the county records them.
+  const layout = [
+    { pin: "17-08-101-022-0000", land: "61875.00", impr: "268125.00" },
+    { pin: "17-08-101-023-0000", land: "20625.00", impr: "41250.00" },
+    { pin: "17-08-101-024-0000", land: "20625.00", impr: "0.00" },
+  ];
+  const parcels = (await c.query<{ id: number; pin: string }>(`SELECT id, pin FROM parcels WHERE firm_id = $1 AND property_id = $2`, [firmId, grand.id])).rows;
+  const appeals = (await c.query<{ id: number; orig_av: string | null; target_av: string | null; resolved_av: string | null }>(
+    `SELECT id, orig_av, target_av, resolved_av FROM appeals WHERE firm_id = $1 AND property_id = $2`, [firmId, grand.id],
+  )).rows;
+  const base = layout.map((l, i) => ({ key: i, land: l.land, impr: l.impr, av: null }));
+  for (const a of appeals) {
+    if (!a.orig_av) continue;
+    const orig = splitAgreedTotal(base, a.orig_av);
+    const target = a.target_av ? splitAgreedTotal(orig, a.target_av) : null;
+    const resolved = a.resolved_av ? splitAgreedTotal(orig, a.resolved_av) : null;
+    for (const [i, l] of layout.entries()) {
+      const parcelId = parcels.find((p) => p.pin === l.pin)!.id;
+      await c.query(
+        `UPDATE appeal_pins SET orig_land_av = $4, orig_impr_av = $5, orig_av = $6, target_land_av = $7, target_impr_av = $8, target_av = $9,
+                resolved_land_av = $10, resolved_impr_av = $11, resolved_av = $12
+          WHERE firm_id = $1 AND appeal_id = $2 AND parcel_id = $3`,
+        [firmId, a.id, parcelId, orig[i].land, orig[i].impr, orig[i].av, target?.[i].land ?? null, target?.[i].impr ?? null, target?.[i].av ?? null,
+          resolved?.[i].land ?? null, resolved?.[i].impr ?? null, resolved?.[i].av ?? null],
+      );
+    }
+  }
 }
 
 /**

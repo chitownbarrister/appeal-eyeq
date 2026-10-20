@@ -639,3 +639,30 @@ a.fname:hover, button.fname:hover { text-decoration: underline; }
 .tpl-actions { display: inline-flex; gap: 2px; }
 tr.inactive td { color: var(--faint); }
 .fwrap > .card + .card { margin-top: 0; }
+
+/* ---------------- values by PIN */
+.pinvals { display: flex; flex-direction: column; gap: 10px; }
+.vtiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.vtile { padding: 11px 14px; display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.vtiles > .card + .card { margin-top: 0; }
+.vtile .label { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.vtile b { font-family: var(--f-display); font-weight: 500; font-size: 22px; color: var(--navy); }
+.vtile b.copper { color: var(--copper-ink); }
+.pintable td, .pintable th { padding-top: 5px; padding-bottom: 5px; }
+.pintable tr.pinstart td { border-top: 1px solid var(--line); }
+.pintable tbody tr:first-child td { border-top: 0; }
+.pintable td .in.num { width: 120px; margin-left: auto; display: block; }
+.pintable .pin { color: var(--navy); white-space: nowrap; }
+.pintable tr.ptotal td { background: var(--paper); }
+.pintable tr.ptotal:first-of-type td, .pintable tr.ptotal + tr.ptotal td { border-top: 0; }
+.pintable tr.ptotal td { border-bottom: 0; }
+.check.small { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.divide { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 0; }
+.divide .fld { margin: 0; }
+.divide .in { height: 30px; }
+.offer-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 12px 14px; border-top: 1px solid var(--line); }
+.offer-form .fld { margin: 0; }
+.offer-form .fld.grow { flex: 1 1 200px; }
+.offer-form .in { height: 30px; }
+.ptab-flag { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 10px; padding: 7px 12px; border-radius: var(--r); background: var(--copper-wash); border: 1px solid var(--copper-line); color: var(--copper-ink); font-size: 12.5px; }
+.ptab-flag .lk { font-size: 12.5px; color: var(--copper-ink); }

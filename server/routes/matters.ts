@@ -16,6 +16,8 @@ import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js"
 import { referenceFor, differsFromReference, isManualSource, windowFor } from "../reference-lookup.js";
 import { todayIso } from "../today.js";
 import { LEVEL_SHORT, WINDOW_ACTIVE_SUBSTAGES, buildDeadlineList, windowItem, type DeadlineRow } from "../deadlines.js";
+import { applyRollover, refreshAppealFromPins, rolloverIntoNewAppeal, seedPinsForNewAppeal } from "../appeal-pins.js";
+import { ensureAppealFolder } from "./property-files.js";
 
 export const mattersRouter = Router();
 
@@ -115,7 +117,8 @@ mattersRouter.get("/properties", async (req, res) => {
               GREATEST(0, EXTRACT(day FROM now() - cur.substage_since))::int AS days_in_substage,
               cur.orig_av AS current_av, cur.target_av, cur.estimated_savings, cur.next_action, cur.next_action_on,
               win.opens_on AS window_opens_on, win.closes_on AS window_closes_on,
-              nd.title AS deadline_title, nd.due_on AS deadline_on, nd.kind AS deadline_kind
+              nd.title AS deadline_title, nd.due_on AS deadline_on, nd.kind AS deadline_kind,
+              COALESCE(pt.years, '{}') AS pending_ptab_years
          FROM properties p
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
          JOIN counties co ON co.id = p.county_id
@@ -133,6 +136,10 @@ mattersRouter.get("/properties", async (req, res) => {
               AND w.level = cur.level AND w.assessment_year = cur.assessment_year
             ORDER BY w.township_id NULLS LAST LIMIT 1
          ) win ON true
+         LEFT JOIN LATERAL (
+           SELECT array_agg(DISTINCT x.assessment_year ORDER BY x.assessment_year) AS years FROM appeals x
+            WHERE x.firm_id = p.firm_id AND x.property_id = p.id AND x.level = 'ptab' AND x.status IN ('open', 'waiting_decision')
+         ) pt ON true
          LEFT JOIN LATERAL (
            SELECT d.title, d.due_on, d.kind FROM deadlines d
             WHERE d.firm_id = p.firm_id AND d.property_id = p.id AND d.status = 'open'
@@ -330,6 +337,10 @@ mattersRouter.get("/properties/:id", async (req, res) => {
       };
     }),
     deadlines: buildDeadlineList(data.deadlineRows, windowItem(data.win, data.cur, today), today),
+    pendingPtab: data.appeals
+      .filter((a) => a.level === "ptab" && ["open", "waiting_decision"].includes(a.status))
+      .map((a) => ({ appealId: a.id, year: a.assessment_year, docket: a.petition_no ?? null }))
+      .sort((x, y) => x.year - y.year),
     today,
     contacts: data.contacts,
     activities: data.activities,
@@ -482,8 +493,15 @@ mattersRouter.delete("/parcels/:id", requirePermission("properties.edit"), async
     if (!parcel) return "missing";
     const count = (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM parcels WHERE firm_id = $1 AND property_id = $2`, [req.ctx!.firmId, parcel.property_id])).rows[0].n;
     if (count <= 1) return "last";
-    const used = await c.query(`SELECT 1 FROM appeals WHERE firm_id = $1 AND parcel_id = $2 LIMIT 1`, [req.ctx!.firmId, pid]);
+    const used = await c.query(
+      `SELECT 1 FROM appeals WHERE firm_id = $1 AND parcel_id = $2
+       UNION ALL SELECT 1 FROM appeal_pins WHERE firm_id = $1 AND parcel_id = $2
+         AND COALESCE(orig_av, target_av, resolved_av, orig_land_av, orig_impr_av) IS NOT NULL
+       LIMIT 1`,
+      [req.ctx!.firmId, pid],
+    );
     if (used.rowCount) return "used";
+    await c.query(`DELETE FROM appeal_pins WHERE firm_id = $1 AND parcel_id = $2`, [req.ctx!.firmId, pid]);
     await c.query(`DELETE FROM parcels WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]);
     if (parcel.is_primary) {
       await c.query(
@@ -495,7 +513,7 @@ mattersRouter.delete("/parcels/:id", requirePermission("properties.edit"), async
   });
   if (result === "missing") { res.status(404).json({ error: "Parcel not found." }); return; }
   if (result === "last") return bad(res, "A property needs at least one parcel.");
-  if (result === "used") return bad(res, "An appeal is filed on this parcel. Remove or reassign the appeal first.");
+  if (result === "used") return bad(res, "An appeal has values for this PIN. Clear them, or remove the appeal, first.");
   res.json({ ok: true });
 });
 
@@ -525,13 +543,13 @@ async function createAppeal(
   const prev = PREV_LEVEL[a.level];
   const prevAppeal = prev
     ? (await c.query(
-        `SELECT resolved_av, orig_av, resolved_land_av, resolved_impr_av FROM appeals
+        `SELECT id, resolved_av, orig_av, resolved_land_av, resolved_impr_av FROM appeals
           WHERE firm_id = $1 AND property_id = $2 AND assessment_year = $3 AND level = $4 ORDER BY id DESC LIMIT 1`,
         [firmId, propertyId, a.assessmentYear, prev],
       )).rows[0]
     : null;
   const latest = (await c.query(
-    `SELECT COALESCE(resolved_av, orig_av) AS av FROM appeals a WHERE firm_id = $1 AND property_id = $2
+    `SELECT id, COALESCE(resolved_av, orig_av) AS av FROM appeals a WHERE firm_id = $1 AND property_id = $2
       ORDER BY assessment_year DESC, ${LEVEL_ORDER} DESC LIMIT 1`,
     [firmId, propertyId],
   )).rows[0];
@@ -555,6 +573,11 @@ async function createAppeal(
       taxes.originalTax,
     ],
   )).rows[0];
+  // Its PINs: originals carried from the earlier appeal's results, PIN by PIN; then totals from them,
+  // and a decided PTAB earlier in the same reassessment cycle supplies the target.
+  await seedPinsForNewAppeal(c, firmId, row.id, prevAppeal?.id ?? latest?.id ?? null, a.parcelId ?? null);
+  await refreshAppealFromPins(c, firmId, row.id);
+  await rolloverIntoNewAppeal(c, firmId, row.id);
   return row.id;
 }
 
@@ -570,7 +593,9 @@ mattersRouter.post("/properties/:id/appeals", requirePermission("appeals.edit"),
   if (!pid) return bad(res, "Invalid property.");
   if (!parsed.success) return bad(res, parsed.error);
   const newId = await withContext(req.ctx!, (c) => createAppeal(c, req, pid, parsed.data));
-  res.status(201).json({ id: newId });
+  // The property's Dropbox folder gets this appeal's year and level folder right away (when there is one).
+  const folder = await ensureAppealFolder(req, pid, parsed.data.assessmentYear, parsed.data.level).catch(() => null);
+  res.status(201).json({ id: newId, folder });
 });
 
 const valueCols = ["land", "impr", "personal", "adjust"] as const;
@@ -664,6 +689,13 @@ mattersRouter.patch("/appeals/:id", requirePermission("appeals.edit"), async (re
       next[srcCol] = `Entered by ${userName}: ${d.overrideReason}`;
     }
 
+    // Values typed as property totals: fine for a one-PIN property (the PIN follows below);
+    // with several PINs, each PIN's values are edited instead.
+    const pinRows = (await c.query<{ id: number }>(`SELECT id FROM appeal_pins WHERE firm_id = $1 AND appeal_id = $2`, [req.ctx!.firmId, aid])).rows;
+    const totalsTyped = (["original", "target", "resolved"] as const).filter((k) => d[k] && (["land", "impr", "total"] as const).some((x) => d[k]![x] !== undefined));
+    if (pinRows.length > 1 && totalsTyped.length) {
+      throw Object.assign(new Error("pins"), { status: 400, publicMessage: "This property has several PINs. Enter land and building for each PIN instead of the totals." });
+    }
     const merged = { ...a, ...next };
     const override = Boolean(merged.calc_override);
     if (!override) {
@@ -686,6 +718,22 @@ mattersRouter.patch("/appeals/:id", requirePermission("appeals.edit"), async (re
       `UPDATE appeals SET ${cols.map((col, i) => `${col} = $${i + 3}`).join(", ")} WHERE firm_id = $1 AND id = $2 RETURNING *`,
       [req.ctx!.firmId, aid, ...cols.map((col) => next[col])],
     );
+    if (pinRows.length === 1 && totalsTyped.length) {
+      const row = r.rows[0];
+      for (const k of totalsTyped) {
+        const prefix = k === "original" ? "orig" : k;
+        const extra = [row[`${prefix}_personal_av`], row[`${prefix}_adjust_av`]].filter((x: string | null) => x !== null);
+        const total = row[`${prefix}_av`];
+        const av = total === null ? null : extra.length ? centsToString(extra.reduce((acc: bigint, x: string) => acc - toCents(x), toCents(total))) : total;
+        if (k === "target") await c.query(`UPDATE appeals SET target_source = 'manual', target_source_appeal_id = NULL WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]);
+        await c.query(
+          `UPDATE appeal_pins SET ${prefix}_land_av = $3, ${prefix}_impr_av = $4, ${prefix}_av = $5 WHERE firm_id = $1 AND id = $2`,
+          [req.ctx!.firmId, pinRows[0].id, row[`${prefix}_land_av`], row[`${prefix}_impr_av`], av],
+        );
+      }
+    }
+    // A PTAB decision carries forward to later appeals in the same reassessment cycle.
+    if (r.rows[0].level === "ptab") await applyRollover(c, req.ctx!.firmId!, aid);
     return r.rows[0];
   });
   if (!result) { res.status(404).json({ error: "Appeal not found." }); return; }
@@ -727,7 +775,11 @@ mattersRouter.post("/appeals/:id/use-reference", requirePermission("appeals.edit
 mattersRouter.delete("/appeals/:id", requirePermission("appeals.edit"), async (req, res) => {
   const aid = idParam(req);
   if (!aid) return bad(res, "Invalid appeal.");
-  const r = await withContext(req.ctx!, (c) => c.query(`DELETE FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]));
+  const r = await withContext(req.ctx!, async (c) => {
+    // Appeals whose target rolled over from this one keep the values but lose the link.
+    await c.query(`UPDATE appeals SET target_source_appeal_id = NULL WHERE firm_id = $1 AND target_source_appeal_id = $2`, [req.ctx!.firmId, aid]);
+    return c.query(`DELETE FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]);
+  });
   if (!r.rowCount) { res.status(404).json({ error: "Appeal not found." }); return; }
   res.json({ ok: true });
 });

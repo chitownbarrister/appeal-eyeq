@@ -804,3 +804,28 @@ propertyFilesRouter.post("/properties/:id/files/revisions/restore", requirePermi
   await withContext(req.ctx!, (c) => c.query(`UPDATE documents SET rev = $3, size = $4, server_modified = $5 WHERE firm_id = $1 AND file_id = $2`, [req.ctx!.firmId, f.meta.id, m.rev, m.size ?? null, m.server_modified ?? null]));
   res.json({ rev: m.rev });
 });
+
+/**
+ * When an appeal is created, its Appeals / year / level folder is made in the property's
+ * Dropbox folder, if the property has one and Dropbox is connected. Returns the path, or null
+ * when there's nothing to do. Old short level names are renamed rather than duplicated.
+ */
+export async function ensureAppealFolder(req: Request, propertyId: number, year: number, level: Level): Promise<string | null> {
+  if (req.auth?.user.isSuperAdmin) return null;
+  const dbx = await FirmDropbox.open(req.ctx!);
+  if (!dbx) return null;
+  const link = await withContext(req.ctx!, async (c) =>
+    (await c.query<{ folder_id: string }>(`SELECT folder_id FROM property_folders WHERE firm_id = $1 AND property_id = $2 AND provider = 'dropbox'`, [req.ctx!.firmId, propertyId])).rows[0] ?? null,
+  );
+  if (!link) return null;
+  return dropboxCall(async () => {
+    const folder = await locate(dbx, link.folder_id);
+    if (!folder) return null;
+    const t = await template(req);
+    const appealsPath = joinPath(folder.path_display, t.appeals?.name ?? "Appeals");
+    await ensureFolder(dbx, appealsPath);
+    await renameLegacyLevels(dbx, t, appealsPath);
+    const made = await ensureFolder(dbx, joinPath(appealsPath, String(year), t.levels[level]));
+    return made.path_display;
+  });
+}

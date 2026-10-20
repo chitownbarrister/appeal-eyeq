@@ -119,7 +119,7 @@ test("a firm admin connects Dropbox, creates a property folder, uploads and open
   expect(await res.text()).toBe("%PDF-1.4 engagement");
 
   // Open goes to the file's page on Dropbox, where Open, then the app, starts the desktop app.
-  await expect(page.getByRole("menuitem", { name: /^Open in your PDF app/ })).toHaveAttribute("href", /dropbox\.test\/.*Engagement%20letter\.pdf/);
+  await expect(page.getByRole("menuitem", { name: /^Open via Dropbox/ })).toHaveAttribute("href", /dropbox\.test\/.*Engagement%20letter\.pdf/);
   await page.keyboard.press("Escape");
 
   // The files are really in the team space, at the expected path.

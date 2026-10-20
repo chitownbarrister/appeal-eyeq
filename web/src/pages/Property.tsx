@@ -45,6 +45,7 @@ interface Detail {
   activities: Activity[];
   reference: { rate: { taxYear: number; ratePercent: string; source: string } | null; equalizer: { year: number; factor: string; source: string } | null };
   fees: { firstYear: EffectiveFee; refund: EffectiveFee };
+  pendingPtab: { appealId: number; year: number; docket: string | null }[];
 }
 
 type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "files";
@@ -151,7 +152,7 @@ export function Property() {
                   {can("appeals.edit") && <button className="btn small" onClick={() => setSheet("appeal")}>+ Appeal</button>}
                 </div>
               </div>
-              {splitMatterTitle(p.title).pin && <div className="pin-head">PIN {splitMatterTitle(p.title).pin}</div>}
+              {splitMatterTitle(p.title).pin && <div className="pin-head">PIN {splitMatterTitle(p.title).pin}{data.parcels.length > 1 ? ` and ${data.parcels.length - 1} more` : ""}</div>}
               <h1>{splitMatterTitle(p.title).place}</h1>
               <div className="dmeta">
                 <span>Client <Link to={`/accounts/${p.account_id}`}>{p.account_name}</Link></span>
@@ -159,6 +160,14 @@ export function Property() {
                 <span><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span> {p.status === "active" ? "Open until the property is sold or the engagement ends" : ""}</span>
                 {p.no_fee && <span className="pill net">No fee property</span>}
               </div>
+              {data.pendingPtab.length > 0 && (
+                <div className="ptab-flag" role="status">
+                  <b>Pending PTAB</b>
+                  {data.pendingPtab.map((x) => (
+                    <button key={x.appealId} type="button" className="lk" onClick={() => { setSelected(x.appealId); setTab("values"); }}>{x.year}{x.docket ? ` · docket ${x.docket}` : ""}</button>
+                  ))}
+                </div>
+              )}
               {years.length > 0 && (
                 <div style={{ marginTop: 18 }}>
                   <div className="vseg" role="group" aria-label="Assessment year">

@@ -1,48 +1,20 @@
-// The Values tab: one appeal's assessed values (original, target, resolved)
-// split into land, improvement, personal and adjustment, with FMV, equalized
-// value, net tax and savings recalculated live as you type, using the same
-// exact-decimal math the server uses.
+// The Values tab: one appeal's values PIN by PIN (land, building, AV for
+// original, target and resolved; see PinValues), with FMV, equalized value,
+// net tax and savings recalculated live as you type, using the same
+// exact-decimal math the server uses, and the appeal's own details.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { useFirmUsers } from "../data";
-import { cleanNumber, fmvFromAv, formatDateTime, formatMoney, formatValue, nn } from "../format";
+import { cleanNumber, formatDateTime, formatMoney, nn } from "../format";
+import { PinValues, type LiveTotals } from "./PinValues";
 import { computeAppealTax } from "../../../shared/valuation";
 import { centsToString, equalizedValue, feeAmount, toCents } from "../../../shared/money";
 import { APPEAL_STATUSES, APPEAL_STATUS_LABELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS, type Level, type Substage } from "../../../shared/domain";
 import type { AppealRow } from "../pages/Property";
 
-const COLS = [["original", "orig", "Original"], ["target", "target", "Target"], ["resolved", "resolved", "Resolved"]] as const;
-const PARTS = [["land", "Land"], ["impr", "Improvement / building"], ["personal", "Personal"], ["adjust", "Value adjustment"]] as const;
-type ColKey = (typeof COLS)[number][0];
-type PartKey = (typeof PARTS)[number][0] | "total";
-type Grid = Record<ColKey, Record<PartKey, string>>;
-
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-/** Whole-dollar values show without ".00" in the inputs (20250, not 20250.00). */
-const sv = (v: unknown) => s(v).replace(/\.00$/, "");
 const valid = (v: string) => v === "" || /^-?\d{1,12}(\.\d{1,2})?$/.test(cleanNumber(v));
-
-function gridFrom(a: AppealRow): Grid {
-  const g = {} as Grid;
-  for (const [key, prefix] of COLS) {
-    const rec = a as unknown as Record<string, string | null>;
-    g[key] = {
-      land: sv(rec[`${prefix}_land_av`]), impr: sv(rec[`${prefix}_impr_av`]), personal: sv(rec[`${prefix}_personal_av`]),
-      adjust: sv(rec[`${prefix}_adjust_av`]), total: sv(rec[`${prefix}_av`]),
-    };
-  }
-  return g;
-}
-
-/** The column's total: the sum of its parts when any part is filled in, otherwise the total typed directly. */
-function columnTotal(c: Record<PartKey, string>): string | null {
-  const parts = PARTS.map(([k]) => cleanNumber(c[k])).filter((v) => v !== "");
-  if (parts.length && parts.every(valid)) return centsToString(parts.reduce((acc, v) => acc + toCents(v), 0n));
-  if (parts.length) return null;
-  const t = cleanNumber(c.total);
-  return t !== "" && valid(t) ? centsToString(toCents(t)) : null;
-}
 
 export function ValuesEditor({
   appeal, onSaved, canEdit, canEditFees, onDeleted,
@@ -54,7 +26,6 @@ export function ValuesEditor({
   canEditFees: boolean;
 }) {
   const users = useFirmUsers();
-  const [grid, setGrid] = useState<Grid>(() => gridFrom(appeal));
   const [form, setForm] = useState(() => formFrom(appeal));
   const [manual, setManual] = useState({ original: s(appeal.original_tax), target: s(appeal.target_tax), resolved: s(appeal.resolved_tax) });
   const [rateEdit, setRateEdit] = useState(false);
@@ -66,7 +37,6 @@ export function ValuesEditor({
   // Fresh data for the same appeal (after a save) refreshes the fields but keeps the confirmation;
   // switching to another appeal also clears messages.
   useEffect(() => {
-    setGrid(gridFrom(appeal));
     setForm(formFrom(appeal));
     setManual({ original: s(appeal.original_tax), target: s(appeal.target_tax), resolved: s(appeal.resolved_tax) });
   }, [appeal]);
@@ -77,7 +47,13 @@ export function ValuesEditor({
     setConfirmDelete(false);
   }, [appeal.id]);
 
-  const totals = useMemo(() => ({ original: columnTotal(grid.original), target: columnTotal(grid.target), resolved: columnTotal(grid.resolved) }), [grid]);
+  // Totals come from the PINs, live as they're typed.
+  const [totals, setTotals] = useState<LiveTotals>({ original: appeal.orig_av, target: appeal.target_av, resolved: appeal.resolved_av });
+  const pinSave = useRef<{ save: (() => Promise<void>) | null; valid: boolean }>({ save: null, valid: true });
+  const [pinsValid, setPinsValid] = useState(true);
+  const [pinsKey, setPinsKey] = useState(0);
+  const onTotals = useCallback((t: LiveTotals) => setTotals((cur) => (cur.original === t.original && cur.target === t.target && cur.resolved === t.resolved ? cur : t)), []);
+  const register = useCallback((save: (() => Promise<void>) | null, valid: boolean) => { pinSave.current = { save, valid }; setPinsValid(valid); }, []);
   const eq = form.equalizer.trim() || null;
   const rate = form.taxRatePercent.trim() || null;
   const computed = useMemo(() => {
@@ -97,21 +73,15 @@ export function ValuesEditor({
   const feeEstimate = appeal.fee.basis === "first_year_savings" && feeBase && /^\d{1,3}(\.\d{1,2})?$/.test(feePercent) ? feeAmount(feeBase, feePercent) : null;
   const ratio = form.assessmentRatio.trim() || appeal.assessment_ratio;
   const rateChanged = eq !== (appeal.equalizer ?? null) || rate !== (appeal.tax_rate_percent ?? null);
-  const gridValid = COLS.every(([k]) => [...PARTS.map(([p]) => p), "total" as const].every((p) => valid(grid[k][p])));
+  const gridValid = pinsValid;
 
   async function save() {
     setBusy(true);
     setError("");
     setSaved("");
     try {
-      const values = Object.fromEntries(
-        COLS.map(([k]) => [k, {
-          ...Object.fromEntries(PARTS.map(([p]) => [p, nn(cleanNumber(grid[k][p]))])),
-          total: nn(cleanNumber(grid[k].total)),
-        }]),
-      );
+      if (pinSave.current.save) await pinSave.current.save();
       const body: Record<string, unknown> = {
-        ...values,
         status: form.status, substage: form.substage, externalId: nn(form.externalId), petitionNo: nn(form.petitionNo),
         filedOn: nn(form.filedOn), decisionOn: nn(form.decisionOn),
         representativeUserId: form.representativeUserId ? Number(form.representativeUserId) : null,
@@ -130,6 +100,7 @@ export function ValuesEditor({
       if (canEditFees && (form.feePercent.trim() || null) !== (appeal.fee_percent ?? null)) body.feePercent = nn(cleanNumber(form.feePercent));
       await api(`/firm/appeals/${appeal.id}`, { method: "PATCH", body });
       setSaved("Saved.");
+      setPinsKey((k) => k + 1);
       onSaved();
     } catch (err) {
       setError(errorText(err));
@@ -166,22 +137,6 @@ export function ValuesEditor({
       setBusy(false);
     }
   }
-
-  const cell = (k: ColKey, p: PartKey) => {
-    const sumMode = p === "total" && PARTS.some(([x]) => grid[k][x].trim() !== "");
-    if (p === "total" && sumMode) return <b className="num">{formatValue(totals[k])}</b>;
-    return (
-      <input
-        className={`in num${valid(grid[k][p]) ? "" : " invalid"}`}
-        style={{ height: 30, ...(valid(grid[k][p]) ? {} : { borderColor: "var(--crit)" }) }}
-        aria-label={`${COLS.find((c) => c[0] === k)![2]} ${p === "total" ? "total AV" : PARTS.find((x) => x[0] === p)![1]} AV`}
-        value={grid[k][p]}
-        disabled={!canEdit}
-        inputMode="decimal"
-        onChange={(e) => setGrid({ ...grid, [k]: { ...grid[k], [p]: e.target.value } })}
-      />
-    );
-  };
 
   const substages: Substage[] = [...LEVEL_SUBSTAGES[appeal.level], "closed"];
 
@@ -229,6 +184,17 @@ export function ValuesEditor({
         </div>
       )}
 
+      <PinValues
+        key={`${appeal.id}:${pinsKey}`}
+        appealId={appeal.id}
+        level={appeal.level}
+        ratio={ratio}
+        canEdit={canEdit}
+        onTotals={onTotals}
+        register={register}
+        onChanged={(msg) => { setSaved(msg); onSaved(); }}
+      />
+
       <div className="card">
         <div className="tw">
           <table className="values compact">
@@ -236,17 +202,10 @@ export function ValuesEditor({
               <tr><th /><th className="num">Original</th><th className="num">Target</th><th className="num">Resolved</th></tr>
             </thead>
             <tbody>
-              <tr className="group"><td colSpan={4}>Assessed value</td></tr>
-              {PARTS.map(([p, label]) => (
-                <tr key={p}><td>{label}</td>{COLS.map(([k]) => <td key={k} className="num">{cell(k, p)}</td>)}</tr>
-              ))}
-              <tr><td><b>Total AV</b></td>{COLS.map(([k]) => <td key={k} className="num">{cell(k, "total")}</td>)}</tr>
-              <tr className="group"><td colSpan={4}>Fair market value (level of assessment {ratio ?? "not set"}%)</td></tr>
-              <tr><td>Total FMV</td>{COLS.map(([k]) => <td key={k} className="num">{formatValue(fmvFromAv(totals[k], ratio))}</td>)}</tr>
               <tr className="group"><td colSpan={4}>Tax</td></tr>
               <tr>
                 <td>Equalized value</td>
-                {COLS.map(([k]) => <td key={k} className="num">{!form.calcOverride && totals[k] && eq && /^\d{1,3}(\.\d{1,4})?$/.test(eq) ? formatMoney(equalizedValue(totals[k]!, eq)).replace("$", "") : "—"}</td>)}
+                {(["original", "target", "resolved"] as const).map((k) => <td key={k} className="num">{!form.calcOverride && totals[k] && eq && /^\d{1,3}(\.\d{1,4})?$/.test(eq) ? formatMoney(equalizedValue(totals[k]!, eq)).replace("$", "") : "—"}</td>)}
               </tr>
               <tr>
                 <td>Net tax</td>

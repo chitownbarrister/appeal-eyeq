@@ -153,6 +153,16 @@ describe("a property's folder from the template", () => {
   });
 });
 
+describe("a new appeal level", () => {
+  it("creates its year and level folder in the property's folder right away", async () => {
+    const r = await call(env.base, dillon, "POST", `/api/firm/properties/${towerId}/appeals`, { assessmentYear: 2024, level: "ptab" });
+    expect(r.status).toBe(201);
+    expect(r.body.folder).toBe(`${TOWER}/Appeals/2024/Property Tax Appeal Board`);
+    expect(await tree()).toContain(`D ${TOWER}/Appeals/2024/Property Tax Appeal Board`);
+    await call(env.base, dillon, "DELETE", `/api/firm/appeals/${r.body.id}`);
+  });
+});
+
 describe("profiles", () => {
   it("records who uploaded a file, and its year and level from the folder", async () => {
     expect((await upload(julie, ASSESSOR_2026, "brief draft.docx", "brief v1")).status).toBe(201);

@@ -48,8 +48,10 @@ test("property page: year track, appeals and the 2025 BOR at $1,736.12", async (
   await expect(values).toContainText("$1,736.12");
   await expect(values).toContainText("$694.45");
   await expect(values).toContainText("waived, no fee");
-  await expect(values).toContainText("700,000");
-  await expect(values).toContainText("628,000");
+  const pins = page.locator("table.pintable");
+  await expect(pins).toContainText("700,000");
+  await expect(pins).toContainText("628,000");
+  await expect(page.locator(".vtiles")).toContainText("Of the requested reduction");
   await page.screenshot({ path: "test-results/values-2025-bor.png", fullPage: true });
 });
 
@@ -64,9 +66,10 @@ test("editing an appeal recalculates live, saves, and moves the year track", asy
   await expect(page.getByText("Applied the latest published equalizer and rate.")).toBeVisible();
   await expect(page.locator("table.values")).toContainText("$1,736.12");
 
-  await page.getByLabel("Resolved Land AV").fill("20250");
-  await page.getByLabel("Resolved Improvement / building AV").fill("42,550");
-  await expect(page.locator("table.values tr", { hasText: "Total AV" })).toContainText("62,800");
+  await page.getByLabel(/Resolved land$/).fill("20250");
+  await page.getByLabel(/Resolved building$/).fill("42,550");
+  await expect(page.locator(".vtile", { hasText: "Resolved AV" })).toContainText("62,800");
+  await expect(page.locator("table.pintable")).toContainText("628,000");
   await page.getByLabel("Status").selectOption("reduced");
   await page.getByRole("button", { name: "Save appeal" }).click();
   await expect(page.getByText("Saved.")).toBeVisible();

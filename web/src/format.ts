@@ -16,14 +16,8 @@ export function formatValue(v: string | number | null | undefined): string {
   return `${neg ? "-" : ""}${grouped}${frac === "00" ? "" : `.${frac}`}`;
 }
 
-/** Fair market value from an assessed value and a level of assessment (percent). */
-export function fmvFromAv(av: string | null | undefined, ratioPercent: string | null | undefined): string | null {
-  if (av === null || av === undefined || !ratioPercent || Number(ratioPercent) === 0) return null;
-  const cents = toCents(av);
-  const ratioBp = toCents(ratioPercent); // percent with 2 decimals, as hundredths
-  const fmvCents = (cents * 10000n + ratioBp / 2n) / ratioBp; // cents * 100 / (ratio%)
-  return centsToString(((fmvCents + 50n) / 100n) * 100n); // to whole dollars
-}
+/** Fair market value from AV and the level of assessment, to the penny (33.33% is one third exactly). */
+export { fmvFromAv } from "../../shared/pins";
 
 /** "10.3%" reduction from original to resolved. */
 export function reductionPct(orig: string | null, resolved: string | null): string {
