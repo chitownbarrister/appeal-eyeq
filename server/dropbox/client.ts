@@ -125,7 +125,7 @@ export class FirmDropbox {
     }
   }
 
-  async upload(path: string, body: Buffer): Promise<{ name: string; path_display: string; size: number }> {
+  async upload(path: string, body: Buffer): Promise<{ name: string; path_display: string; size: number; id: string; rev: string; server_modified: string }> {
     const send = async (token: string) =>
       fetch(`${dropboxUrls().content}/2/files/upload`, {
         method: "POST",
@@ -140,6 +140,35 @@ export class FirmDropbox {
     let res = await send(await this.accessToken());
     if (res.status === 401) res = await send(await this.accessToken(true));
     if (!res.ok) throw await readError(res);
-    return res.json() as Promise<{ name: string; path_display: string; size: number }>;
+    return res.json() as Promise<{ name: string; path_display: string; size: number; id: string; rev: string; server_modified: string }>;
+  }
+
+  /**
+   * A content-download call (files/download, files/get_preview): the argument goes in the
+   * Dropbox-API-Arg header, the body comes back as bytes and the metadata in Dropbox-API-Result.
+   */
+  async content(endpoint: "files/download" | "files/get_preview", arg: Record<string, unknown>, maxBytes: number): Promise<{ body: Buffer; contentType: string; result: Record<string, unknown> }> {
+    const send = async (token: string) =>
+      fetch(`${dropboxUrls().content}/2/${endpoint}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Dropbox-API-Arg": headerJson(arg),
+          ...(this.pathRoot ? { "Dropbox-API-Path-Root": headerJson({ ".tag": "root", root: this.pathRoot }) } : {}),
+        },
+      });
+    let res = await send(await this.accessToken());
+    if (res.status === 401) res = await send(await this.accessToken(true));
+    if (!res.ok) throw await readError(res);
+    const length = Number(res.headers.get("content-length") || 0);
+    if (length > maxBytes) {
+      await res.body?.cancel();
+      throw Object.assign(new Error("too big"), { status: 413, publicMessage: "That file is too large to show here. Download it or open it in its app instead." });
+    }
+    const body = Buffer.from(await res.arrayBuffer());
+    if (body.length > maxBytes) throw Object.assign(new Error("too big"), { status: 413, publicMessage: "That file is too large to show here. Download it or open it in its app instead." });
+    let result: Record<string, unknown> = {};
+    try { result = JSON.parse(res.headers.get("dropbox-api-result") || "{}"); } catch { /* no metadata */ }
+    return { body, contentType: res.headers.get("content-type") || "application/octet-stream", result };
   }
 }

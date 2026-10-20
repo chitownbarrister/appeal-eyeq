@@ -986,7 +986,7 @@ mattersRouter.delete("/activities/:id", async (req, res) => {
 mattersRouter.get("/search", async (req, res) => {
   const q = String(req.query.q ?? "").trim().slice(0, 100);
   if (q.length < 2) {
-    res.json({ properties: [], accounts: [], appeals: [] });
+    res.json({ properties: [], accounts: [], appeals: [], documents: [] });
     return;
   }
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
@@ -1015,11 +1015,35 @@ mattersRouter.get("/search", async (req, res) => {
         WHERE a.firm_id = $1 AND (a.external_id ILIKE $2 OR a.petition_no ILIKE $2) ORDER BY a.assessment_year DESC LIMIT 6`,
       [firmId, like],
     )).rows;
-    return { properties, accounts, appeals };
+    // Documents: every word must match the name, type, tags, notes, author, year or level
+    // ("2026 bor decision"). Deleted files and Deadzone matters are left out, and the super
+    // admin never sees client documents, even under support access.
+    const words = q.toLowerCase().split(/\s+/).filter((w) => w.length >= 2).slice(0, 6).map((w) => `%${w.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+    const documents = req.auth!.user.isSuperAdmin || !words.length ? [] : (await c.query(
+      `SELECT d.id, d.property_id, d.name, d.path_display, d.assessment_year, d.level, t.name AS type_name, pf.path_display AS folder_path,
+              p.name AS property_name, p.address1, p.city
+         FROM documents d
+         JOIN properties p ON p.firm_id = d.firm_id AND p.id = d.property_id
+         JOIN property_folders pf ON pf.firm_id = d.firm_id AND pf.property_id = d.property_id AND NOT pf.in_deadzone
+         LEFT JOIN document_types t ON t.firm_id = d.firm_id AND t.id = d.doc_type_id
+        WHERE d.firm_id = $1 AND d.deleted_at IS NULL
+          AND (SELECT bool_and(concat_ws(' ', d.name, t.name, array_to_string(d.tags, ' '), d.notes, d.author, d.assessment_year::text,
+                 CASE d.level WHEN 'assessor' THEN 'assessor assr ccao' WHEN 'bor' THEN 'bor board of review ccbor'
+                              WHEN 'ptab' THEN 'ptab property tax appeal board' WHEN 'circuit' THEN 'circuit court spob tax objection' END) ILIKE w)
+                 FROM unnest($2::text[]) AS w)
+        ORDER BY d.server_modified DESC NULLS LAST LIMIT 8`,
+      [firmId, words],
+    )).rows;
+    return { properties, accounts, appeals, documents };
   });
   res.json({
     properties: data.properties.map((p) => ({ id: p.id, title: matterTitle(p.pin, p.address1 || p.name, p.city, p.township), sub: p.account_name })),
     accounts: data.accounts,
     appeals: data.appeals,
+    documents: data.documents.map((d) => {
+      const base = String(d.folder_path).toLowerCase();
+      const rel = String(d.path_display).toLowerCase().startsWith(`${base}/`) ? String(d.path_display).slice(String(d.folder_path).length + 1) : null;
+      return { id: d.id, propertyId: d.property_id, name: d.name, type: d.type_name, year: d.assessment_year, level: d.level, relPath: rel, property: d.address1 || d.property_name, city: d.city };
+    }),
   });
 });

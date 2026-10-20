@@ -16,7 +16,8 @@ import express, { type Request, type Response } from "express";
 export const FAKE_APP_KEY = "test-app-key";
 export const FAKE_APP_SECRET = "test-app-secret";
 
-interface Node { tag: "file" | "folder"; id: string; name: string; path_display: string; size: number; content: Buffer; modified: string }
+interface Revision { rev: string; content: Buffer; modified: string }
+interface Node { tag: "file" | "folder"; id: string; name: string; path_display: string; size: number; content: Buffer; modified: string; rev: string; history: Revision[] }
 interface Account { id: string; type: "business" | "basic"; email: string; name: string; team: string | null; homeNs: string; teamNs: string | null }
 
 export interface FakeDropbox {
@@ -32,6 +33,7 @@ export interface FakeDropbox {
     teamRootReadOnly: boolean;
     lastPathRoot: string | null;
     calls: string[];
+    deleted: Map<string, Node>; // by lower path: files removed, with their history, for restore
   };
   close: () => Promise<void>;
 }
@@ -51,9 +53,18 @@ export function createFakeDropbox() {
     teamRootReadOnly: false,
     lastPathRoot: null,
     calls: [],
+    deleted: new Map(),
   };
   let seq = 0;
   const newId = (p: string) => `${p}${++seq}${randomBytes(3).toString("hex")}`;
+  const newRev = () => randomBytes(8).toString("hex");
+  const revContent = new Map<string, Buffer>();
+  function addRevision(n: Node, content: Buffer) {
+    const r: Revision = { rev: newRev(), content, modified: new Date(Date.now() + n.history.length * 1000).toISOString() };
+    n.history.unshift(r);
+    n.rev = r.rev; n.content = content; n.size = content.length; n.modified = r.modified;
+    revContent.set(r.rev, content);
+  }
   const tree = (ns: string) => {
     if (!state.trees.has(ns)) state.trees.set(ns, new Map());
     return state.trees.get(ns)!;
@@ -67,8 +78,28 @@ export function createFakeDropbox() {
   app.post("/__test/expire-access", (_req, res) => { for (const v of state.access.values()) v.expires = 0; res.json({ ok: true }); });
   app.post("/__test/revoke-all", (_req, res) => { state.access.clear(); state.refresh.clear(); res.json({ ok: true }); });
   app.post("/__test/team-root-readonly", express.json(), (req, res) => { state.teamRootReadOnly = Boolean(req.body.on); res.json({ ok: true }); });
+  /** Simulates someone saving the file in Word (a new revision) or deleting it in Finder, outside Appeal EyeQ. */
+  app.post("/__test/edit", express.json(), (req, res) => {
+    for (const t of state.trees.values()) {
+      const n = t.get(String(req.body.path).toLowerCase());
+      if (n && n.tag === "file") { addRevision(n, Buffer.from(String(req.body.content))); res.json({ rev: n.rev }); return; }
+    }
+    res.status(404).json({ error: "no such file" });
+  });
+  app.post("/__test/delete-outside", express.json(), (req, res) => {
+    for (const t of state.trees.values()) {
+      const n = t.get(String(req.body.path).toLowerCase());
+      if (n) { removeTree(t, n); res.json({ ok: true }); return; }
+    }
+    res.status(404).json({ error: "no such path" });
+  });
   app.get("/__test/tree", (_req, res) => {
     res.json(Object.fromEntries([...state.trees].map(([ns, t]) => [ns, [...t.values()].map((n) => `${n.tag === "folder" ? "D" : "F"} ${n.path_display}`).sort()])));
+  });
+  app.get("/__rev/:rev", (req, res) => {
+    const c = revContent.get(req.params.rev);
+    if (!c) { res.status(404).end(); return; }
+    res.send(c);
   });
   app.get("/__file/:id", (req, res) => {
     for (const t of state.trees.values()) for (const n of t.values()) if (n.id === req.params.id && n.tag === "file") { res.type("application/octet-stream").send(n.content); return; }
@@ -141,8 +172,15 @@ export function createFakeDropbox() {
   const norm = (p: string) => `/${p.split("/").filter(Boolean).join("/")}`;
   const meta = (n: Node) => ({
     ".tag": n.tag, id: n.id, name: n.name, path_display: n.path_display, path_lower: lower(n.path_display),
-    ...(n.tag === "file" ? { size: n.size, server_modified: n.modified, client_modified: n.modified } : {}),
+    ...(n.tag === "file" ? { size: n.size, server_modified: n.modified, client_modified: n.modified, rev: n.rev, content_hash: createHash("sha256").update(n.content).digest("hex") } : {}),
   });
+  function removeTree(t: Map<string, Node>, n: Node) {
+    const doomed = [...t.values()].filter((x) => x === n || lower(x.path_display).startsWith(`${lower(n.path_display)}/`));
+    for (const x of doomed) {
+      t.delete(lower(x.path_display));
+      if (x.tag === "file") state.deleted.set(lower(x.path_display), x);
+    }
+  }
   function resolve(t: Map<string, Node>, path: string): Node | undefined {
     if (path.startsWith("id:")) { for (const n of t.values()) if (n.id === path) return n; return undefined; }
     return t.get(lower(norm(path)));
@@ -155,7 +193,7 @@ export function createFakeDropbox() {
       cur += `/${p}`;
       node = t.get(lower(cur));
       if (!node) {
-        node = { tag: "folder", id: newId("id:"), name: p, path_display: cur, size: 0, content: Buffer.alloc(0), modified: new Date().toISOString() };
+        node = { tag: "folder", id: newId("id:"), name: p, path_display: cur, size: 0, content: Buffer.alloc(0), modified: new Date().toISOString(), rev: "", history: [] };
         t.set(lower(cur), node);
       } else {
         cur = node.path_display;
@@ -185,9 +223,36 @@ export function createFakeDropbox() {
     }
     const realParent = parent ? t.get(lower(parent))!.path_display : "";
     const name = path.slice(path.lastIndexOf("/") + 1);
-    const node: Node = { tag: "file", id: newId("id:"), name, path_display: `${realParent}/${name}`, size: (req.body as Buffer).length, content: req.body as Buffer, modified: new Date().toISOString() };
+    const node: Node = { tag: "file", id: newId("id:"), name, path_display: `${realParent}/${name}`, size: 0, content: Buffer.alloc(0), modified: "", rev: "", history: [] };
+    addRevision(node, req.body as Buffer);
     t.set(lower(node.path_display), node);
     res.json(meta(node));
+  });
+
+  function contentCall(endpoint: string, req: Request, res: Response): { n: Node } | null {
+    state.calls.push(endpoint);
+    const w = who(req, res);
+    if (!w) return null;
+    const arg = JSON.parse(String(req.headers["dropbox-api-arg"] || "{}")) as { path: string };
+    const n = resolve(tree(w.ns), arg.path);
+    if (!n || n.tag !== "file") { fail(res, 409, "path/not_found/"); return null; }
+    res.setHeader("Dropbox-API-Result", JSON.stringify(meta(n)).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
+    return { n };
+  }
+  app.post("/2/files/download", (req, res) => {
+    const got = contentCall("files/download", req, res);
+    if (!got) return;
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.send(got.n.content);
+  });
+  app.post("/2/files/get_preview", (req, res) => {
+    const got = contentCall("files/get_preview", req, res);
+    if (!got) return;
+    const ext = got.n.name.split(".").pop()!.toLowerCase();
+    if (["doc", "docx", "rtf", "ppt", "pptx", "odt"].includes(ext)) { res.setHeader("Content-Type", "application/pdf"); res.send(Buffer.from(`%PDF-1.4 preview of ${got.n.name}`)); return; }
+    if (["xls", "xlsx", "csv", "ods", "xlsm"].includes(ext)) { res.setHeader("Content-Type", "text/html"); res.send(`<table><tr><td>${got.n.name}</td></tr></table><script>window.parent.hacked = true</script>`); return; }
+    res.removeHeader("Dropbox-API-Result");
+    fail(res, 409, "unsupported_extension/");
   });
 
   app.post("/2/:a/:b", express.json({ type: () => true, limit: "1mb" }), (req, res) => handle(`${req.params.a}/${req.params.b}`, req, res));
@@ -236,7 +301,7 @@ export function createFakeDropbox() {
         const folder = resolve(t, String(body.path));
         if (!folder || folder.tag !== "folder") { fail(res, 409, "path/not_found/"); return; }
         const prefix = `${lower(folder.path_display)}/`;
-        const entries = [...t.values()].filter((n) => lower(n.path_display).startsWith(prefix) && !lower(n.path_display).slice(prefix.length).includes("/"));
+        const entries = [...t.values()].filter((n) => lower(n.path_display).startsWith(prefix) && (body.recursive === true || !lower(n.path_display).slice(prefix.length).includes("/")));
         res.json({ entries: entries.map(meta), cursor: "c0", has_more: false });
         return;
       }
@@ -262,9 +327,56 @@ export function createFakeDropbox() {
         return;
       }
       case "files/get_temporary_link": {
+        if (String(body.path).startsWith("rev:")) {
+          const rev = String(body.path).slice(4);
+          if (!revContent.has(rev)) { fail(res, 409, "path/not_found/"); return; }
+          res.json({ metadata: {}, link: `${base}/__rev/${rev}` });
+          return;
+        }
         const n = resolve(t, String(body.path));
         if (!n || n.tag !== "file") { fail(res, 409, "path/not_found/"); return; }
         res.json({ metadata: meta(n), link: `${base}/__file/${n.id}` });
+        return;
+      }
+      case "files/delete_v2": {
+        const n = resolve(t, String(body.path));
+        if (!n) { fail(res, 409, "path_lookup/not_found/"); return; }
+        const m = meta(n);
+        removeTree(t, n);
+        res.json({ metadata: m });
+        return;
+      }
+      case "files/list_revisions": {
+        const id = String(body.path);
+        let n: Node | undefined = resolve(t, id);
+        let isDeleted = false;
+        if (!n) { for (const d of state.deleted.values()) if (d.id === id) { n = d; isDeleted = true; } }
+        if (!n || n.tag !== "file") { fail(res, 409, "path/not_found/"); return; }
+        res.json({
+          is_deleted: isDeleted,
+          entries: n.history.slice(0, Number(body.limit) || 10).map((r) => ({ ".tag": "file", id: n!.id, name: n!.name, path_display: n!.path_display, rev: r.rev, size: r.content.length, server_modified: r.modified })),
+        });
+        return;
+      }
+      case "files/restore": {
+        const path = norm(String(body.path));
+        const rev = String(body.rev);
+        let n = t.get(lower(path));
+        if (n && n.tag !== "file") { fail(res, 409, "path/conflict/"); return; }
+        if (!n) {
+          const gone = state.deleted.get(lower(path));
+          if (!gone || !gone.history.some((r) => r.rev === rev)) { fail(res, 409, "invalid_revision/"); return; }
+          state.deleted.delete(lower(path));
+          const parent = path.slice(0, path.lastIndexOf("/"));
+          if (parent) mkdirs(t, parent);
+          gone.path_display = `${parent ? t.get(lower(parent))!.path_display : ""}/${gone.name}`;
+          t.set(lower(gone.path_display), gone);
+          n = gone;
+        }
+        const r = n.history.find((h) => h.rev === rev);
+        if (!r) { fail(res, 409, "invalid_revision/"); return; }
+        addRevision(n, r.content);
+        res.json(meta(n));
         return;
       }
       default:

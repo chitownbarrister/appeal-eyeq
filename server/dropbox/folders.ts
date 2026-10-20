@@ -1,15 +1,15 @@
-// The folder template for a property and the operations on it:
+// A property's Dropbox folder and the operations on it:
 //
-//   <root>/<Client>/<PIN – Address, City (Township)>/Appeals/<year>/<ASSR | BOR | PTAB | Circuit Court>
+//   <root>/<Client>/<PIN – Address, City (Township)>/<template folders>, Appeals/<year>/<level folder>
+//   <root>/Deadzone/<Client>/<PIN – Address, City (Township)>   (closed matters, moved aside)
 //
+// The template itself (folder names, level names) is per firm; see server/documents.ts.
 // Each property's folder is remembered by Dropbox's folder id, which survives
 // renames, so the link holds even if someone moves the folder in Dropbox. A
 // folder that already exists at the template path is reused, never duplicated.
 
 import { DropboxError, dropboxUrls, type FirmDropbox } from "./client.js";
-import type { Level } from "../../shared/domain.js";
-
-export const LEVEL_FOLDER: Record<Level, string> = { assessor: "ASSR", bor: "BOR", ptab: "PTAB", circuit: "Circuit Court" };
+import { DEADZONE_FOLDER } from "../../shared/documents.js";
 
 /** Characters Dropbox (and Windows, where the desktop app syncs) won't take in a name. */
 export function safeName(name: string): string {
@@ -21,8 +21,10 @@ export function joinPath(...parts: string[]): string {
   return `/${parts.flatMap((p) => p.split("/")).filter(Boolean).join("/")}`;
 }
 
-export function expectedPropertyPath(root: string, clientName: string, matterTitle: string): string {
-  return joinPath(root, safeName(clientName), safeName(matterTitle));
+export function expectedPropertyPath(root: string, clientName: string, matterTitle: string, inDeadzone = false): string {
+  return inDeadzone
+    ? joinPath(root, DEADZONE_FOLDER, safeName(clientName), safeName(matterTitle))
+    : joinPath(root, safeName(clientName), safeName(matterTitle));
 }
 
 /** A path inside the property folder from the browser; refuses anything that climbs out. */
@@ -50,7 +52,10 @@ export function friendlyDropboxError(err: unknown): { status: number; publicMess
   return { status: 502, publicMessage: "Dropbox didn't complete the request. Try again in a moment." };
 }
 
-interface Metadata { ".tag": "file" | "folder" | "deleted"; id?: string; name: string; path_display?: string; path_lower?: string; size?: number; server_modified?: string; client_modified?: string }
+export interface Metadata {
+  ".tag": "file" | "folder" | "deleted"; id?: string; name: string; path_display?: string; path_lower?: string;
+  size?: number; server_modified?: string; client_modified?: string; rev?: string; content_hash?: string;
+}
 
 /** Creates a folder, or returns the one already there. */
 export async function ensureFolder(dbx: FirmDropbox, path: string): Promise<{ id: string; path_display: string }> {
@@ -83,7 +88,7 @@ export async function moveFolder(dbx: FirmDropbox, folderId: string, to: string)
   return { id: r.metadata.id!, path_display: r.metadata.path_display! };
 }
 
-export interface Entry { name: string; kind: "file" | "folder"; size: number | null; modified: string | null; relPath: string; webUrl: string }
+export interface Entry { id: string; rev: string | null; name: string; kind: "file" | "folder"; size: number | null; modified: string | null; relPath: string; path: string; webUrl: string }
 
 export function webUrl(path: string, isFile: boolean): string {
   const base = dropboxUrls().web;
@@ -93,18 +98,31 @@ export function webUrl(path: string, isFile: boolean): string {
   return `${base}/home${parent.split("/").map(encodeURIComponent).join("/")}?preview=${encodeURIComponent(path.slice(slash + 1))}`;
 }
 
-export async function listFolder(dbx: FirmDropbox, folderPath: string, rel: string): Promise<Entry[]> {
+async function listRaw(dbx: FirmDropbox, path: string, recursive: boolean, maxPages = 20): Promise<Metadata[]> {
   const out: Metadata[] = [];
-  let page = await dbx.rpc<{ entries: Metadata[]; cursor: string; has_more: boolean }>("files/list_folder", { path: rel ? joinPath(folderPath, rel) : folderPath, recursive: false, limit: 500 });
+  let page = await dbx.rpc<{ entries: Metadata[]; cursor: string; has_more: boolean }>("files/list_folder", { path, recursive, limit: 2000 });
   out.push(...page.entries);
   let guard = 0;
-  while (page.has_more && guard++ < 20) {
+  while (page.has_more && guard++ < maxPages) {
     page = await dbx.rpc("files/list_folder/continue", { cursor: page.cursor });
     out.push(...page.entries);
   }
+  return out;
+}
+
+/** Every file under a folder, at any depth (for the document index and for deleting a folder). */
+export async function listAllFiles(dbx: FirmDropbox, path: string): Promise<Metadata[]> {
+  return (await listRaw(dbx, path, true)).filter((m) => m[".tag"] === "file");
+}
+
+export async function listFolder(dbx: FirmDropbox, folderPath: string, rel: string): Promise<Entry[]> {
+  const out = await listRaw(dbx, rel ? joinPath(folderPath, rel) : folderPath, false);
   return out
     .filter((m) => m[".tag"] === "file" || m[".tag"] === "folder")
     .map((m) => ({
+      id: m.id ?? "",
+      rev: m.rev ?? null,
+      path: m.path_display ?? joinPath(folderPath, rel, m.name),
       name: m.name,
       kind: m[".tag"] as "file" | "folder",
       size: m[".tag"] === "file" ? m.size ?? null : null,
@@ -117,4 +135,36 @@ export async function listFolder(dbx: FirmDropbox, folderPath: string, rel: stri
 
 export async function temporaryLink(dbx: FirmDropbox, path: string): Promise<string> {
   return (await dbx.rpc<{ link: string }>("files/get_temporary_link", { path })).link;
+}
+
+export async function metadata(dbx: FirmDropbox, path: string): Promise<Metadata | null> {
+  try {
+    return await dbx.rpc<Metadata>("files/get_metadata", { path });
+  } catch (err) {
+    if (isTag(err, "not_found")) return null;
+    throw err;
+  }
+}
+
+/** Renames or moves a file or folder; refuses to overwrite. */
+export async function movePath(dbx: FirmDropbox, from: string, to: string): Promise<Metadata> {
+  try {
+    return (await dbx.rpc<{ metadata: Metadata }>("files/move_v2", { from_path: from, to_path: to, autorename: false })).metadata;
+  } catch (err) {
+    if (isTag(err, "conflict")) throw Object.assign(new Error("taken"), { status: 409, publicMessage: "Something with that name is already there. Choose another name." });
+    throw err;
+  }
+}
+
+export async function deletePath(dbx: FirmDropbox, path: string): Promise<void> {
+  await dbx.rpc("files/delete_v2", { path });
+}
+
+export async function restoreFile(dbx: FirmDropbox, path: string, rev: string): Promise<Metadata> {
+  return dbx.rpc<Metadata>("files/restore", { path, rev });
+}
+
+export async function listRevisions(dbx: FirmDropbox, fileId: string, limit = 20): Promise<Metadata[]> {
+  const r = await dbx.rpc<{ entries: Metadata[] }>("files/list_revisions", { path: fileId, mode: "id", limit });
+  return r.entries;
 }

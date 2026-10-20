@@ -8,6 +8,7 @@ interface Results {
   properties: { id: number; title: string; sub: string }[];
   accounts: { id: number; name: string; city: string | null }[];
   appeals: { id: number; property_id: number; assessment_year: number; level: Level; external_id: string | null; petition_no: string | null; property_name: string }[];
+  documents?: { id: number; propertyId: number; name: string; type: string | null; year: number | null; level: Level | null; relPath: string | null; property: string; city: string | null }[];
 }
 
 interface Item { key: string; to: string; label: string; sub: string; group: string }
@@ -39,6 +40,13 @@ export function GlobalSearch() {
             label: `${a.assessment_year} ${LEVEL_LABELS[a.level]}${a.petition_no ? ` · petition ${a.petition_no}` : ""}${a.external_id ? ` · ID ${a.external_id}` : ""}`,
             sub: a.property_name, group: "Appeals",
           })),
+          ...(r.documents ?? []).map((d) => ({
+            key: `d${d.id}`,
+            to: `/properties/${d.propertyId}?${new URLSearchParams(d.relPath ? { tab: "files", file: d.relPath } : { tab: "files" })}`,
+            label: d.name,
+            sub: [d.type, d.year && d.level ? `${d.year} ${LEVEL_LABELS[d.level]}` : d.year, [d.property, d.city].filter(Boolean).join(", ")].filter(Boolean).join(" · "),
+            group: "Documents",
+          })),
         ];
         setItems(next);
         setActive(0);
@@ -65,7 +73,7 @@ export function GlobalSearch() {
     navigate(item.to);
   }
 
-  const groups = ["Properties", "Clients", "Appeals"].map((g) => ({ g, rows: items.filter((i) => i.group === g) })).filter((x) => x.rows.length);
+  const groups = ["Properties", "Clients", "Appeals", "Documents"].map((g) => ({ g, rows: items.filter((i) => i.group === g) })).filter((x) => x.rows.length);
 
   return (
     <div className="search" ref={box}>
@@ -75,8 +83,8 @@ export function GlobalSearch() {
         </svg>
         <input
           value={q}
-          placeholder="Search PIN, address, client"
-          aria-label="Search properties, clients and appeals"
+          placeholder="Search PIN, address, client, document"
+          aria-label="Search properties, clients, appeals and documents"
           role="combobox"
           aria-expanded={open}
           aria-controls="search-results"

@@ -5,14 +5,16 @@ import { useSession } from "../App";
 import { formatDateTime, titleCase } from "../format";
 import { LEVEL_LABELS, PERMISSIONS, ROLES, ROLE_LABELS, type Level, type Role } from "../../../shared/domain";
 import { IntegrationsTab } from "../components/Integrations";
+import { DocumentsTab } from "../components/DocumentsSettings";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "integrations" | "audit" | "sample";
+type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Users" },
   { id: "fees", label: "Fee defaults" },
   { id: "permissions", label: "Roles & permissions" },
   { id: "support", label: "Support access" },
+  { id: "documents", label: "Documents" },
   { id: "integrations", label: "Integrations" },
   { id: "audit", label: "Audit log" },
 ];
@@ -44,6 +46,7 @@ export function Settings() {
       {tab === "fees" && <FeesTab />}
       {tab === "permissions" && <PermissionsTab />}
       {tab === "support" && <SupportTab />}
+      {tab === "documents" && <DocumentsTab />}
       {tab === "integrations" && <IntegrationsTab />}
       {tab === "audit" && <AuditTab />}
       {tab === "sample" && me.firm?.isSample && <SampleTab />}
@@ -236,6 +239,8 @@ const PERMISSION_LABELS: Record<string, string> = {
   "invoices.send": "Send invoices and statements",
   "invoices.void": "Void invoices",
   "decisions.apply": "Apply decisions",
+  "files.delete": "Delete files and folders",
+  "files.delete_protected": "Delete protected files and template folders",
 };
 
 function PermissionsTab() {
@@ -261,7 +266,8 @@ function PermissionsTab() {
   return (
     <div className="card pad">
       <p className="muted small" style={{ marginTop: 0 }}>
-        Every role starts with the same rights. A firm admin can switch any of them off per role. Managing users, permissions, support access
+        Every role starts with the same rights, except deleting protected files, which starts with attorneys only. A firm admin can switch any of them per role,
+        and can always delete protected files. Managing users, permissions, support access
         and integrations isn't listed here: it belongs to firm admins (Users tab).
       </p>
       <table>

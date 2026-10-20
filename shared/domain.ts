@@ -81,10 +81,21 @@ export const PERMISSIONS = [
   "invoices.send",
   "invoices.void",
   "decisions.apply",
+  "files.delete",
+  "files.delete_protected",
 ] as const;
 // Managing users, permissions, support access and integrations (Dropbox) belongs to
 // firm admins, a switch on each user rather than a role permission.
 export type Permission = (typeof PERMISSIONS)[number];
+
+/** Permissions a new firm does NOT give every role. Everything else starts allowed for all roles. */
+export const PERMISSION_DEFAULT_ROLES: Partial<Record<Permission, readonly Role[]>> = {
+  "files.delete_protected": ["attorney"],
+};
+export function defaultAllowed(role: Role, permission: Permission): boolean {
+  const only = PERMISSION_DEFAULT_ROLES[permission];
+  return only ? only.includes(role) : true;
+}
 
 /** Default fee terms for a new firm. */
 export const DEFAULT_FEES: { level: Level; percent: string; basis: "first_year_savings" | "refund" }[] = [

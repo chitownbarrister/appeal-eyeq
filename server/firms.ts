@@ -1,7 +1,8 @@
 import type pg from "pg";
 import { getPool, withContext } from "./db.js";
 import { hashPassword } from "./auth.js";
-import { DEFAULT_FEES, PERMISSIONS, ROLES, type Role } from "../shared/domain.js";
+import { DEFAULT_FEES, PERMISSIONS, ROLES, defaultAllowed, type Role } from "../shared/domain.js";
+import { seedDocumentDefaults } from "./documents.js";
 
 export interface NewFirmInput {
   name: string;
@@ -47,9 +48,9 @@ async function writeFirmDefaults(client: pg.PoolClient, firmId: number): Promise
   for (const role of ROLES) {
     for (const permission of PERMISSIONS) {
       await client.query(
-        `INSERT INTO role_permissions (firm_id, role, permission, allowed) VALUES ($1, $2, $3, true)
+        `INSERT INTO role_permissions (firm_id, role, permission, allowed) VALUES ($1, $2, $3, $4)
          ON CONFLICT (firm_id, role, permission) DO NOTHING`,
-        [firmId, role, permission],
+        [firmId, role, permission, defaultAllowed(role, permission)],
       );
     }
   }
@@ -60,6 +61,7 @@ async function writeFirmDefaults(client: pg.PoolClient, firmId: number): Promise
       [firmId, fee.level, fee.percent, fee.basis],
     );
   }
+  await seedDocumentDefaults(client, firmId);
 }
 
 /** Used by the sample seed to add more users to an existing firm. */

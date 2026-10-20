@@ -63,7 +63,11 @@ export function Property() {
   const { can } = useSession();
   const { data, error, reload } = useApi<Detail>(`/firm/properties/${id}`);
   const accounts = useApi<{ accounts: { id: number; name: string }[] }>("/firm/accounts");
-  const [tab, setTab] = useState<Tab>(params.get("appeal") ? "values" : "appeals");
+  const [tab, setTab] = useState<Tab>(params.get("tab") === "files" ? "files" : params.get("appeal") ? "values" : "appeals");
+  // A link from search to a document opens the Files tab at that file, even when this page is already open.
+  const askedTab = params.get("tab");
+  const askedFile = params.get("file");
+  useEffect(() => { if (askedTab === "files") setTab("files"); }, [askedTab, askedFile]);
   const [year, setYear] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(params.get("appeal") ? Number(params.get("appeal")) : null);
   const [sheet, setSheet] = useState<"edit" | "fees" | "appeal" | null>(null);
@@ -229,7 +233,7 @@ export function Property() {
           {tab === "parcels" && <ParcelsTab propertyId={p.id} parcels={data.parcels} canEdit={can("properties.edit")} onChanged={() => void refreshAll()} />}
           {tab === "contacts" && <ContactsTab propertyId={p.id} accountId={p.account_id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void refreshAll()} />}
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
-          {tab === "files" && <FilesTab propertyId={p.id} canEdit={can("properties.edit")} />}
+          {tab === "files" && <FilesTab key={`${p.id}:${askedFile ?? ""}`} propertyId={p.id} propertyStatus={p.status} canEdit={can("properties.edit")} initialPath={params.get("path") ?? ""} initialFile={askedFile} />}
         </div>
       </section>
 

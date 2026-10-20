@@ -12,6 +12,9 @@ async function signIn(page: Page, email = "dillon@nicholslaw.example", password 
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
 }
 
+const fileName = (page: Page, name: string) => page.locator(".ftable .fname", { hasText: name });
+const fileRow = (page: Page, name: string) => page.locator(".ftable tbody tr", { has: page.locator(".fname", { hasText: name }) });
+
 async function openTower(page: Page) {
   await page.goto("/properties");
   await page.getByRole("link", { name: /1044 Tower Road, Winnetka/ }).click();
@@ -94,8 +97,8 @@ test("a firm admin connects Dropbox, creates a property folder, uploads and open
     { name: "Comps – 2026.xlsx", mimeType: "application/octet-stream", buffer: Buffer.from("comps sheet") },
   ]);
   await expect(page.getByText("Uploaded 2 files.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Engagement letter.pdf" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Comps – 2026.xlsx" })).toBeVisible();
+  await expect(fileName(page, "Engagement letter.pdf")).toBeVisible();
+  await expect(fileName(page, "Comps – 2026.xlsx")).toBeVisible();
 
   // Upload by dragging a file onto the list.
   await page.locator(".files").evaluate((el) => {
@@ -105,18 +108,19 @@ test("a firm admin connects Dropbox, creates a property folder, uploads and open
     el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
   });
   await expect(page.getByText("Uploaded 1 file.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Hearing notes.docx" })).toBeVisible();
+  await expect(fileName(page, "Hearing notes.docx")).toBeVisible();
   await page.screenshot({ path: "test-results/files-tab.png", fullPage: true });
 
   // Download follows a short-lived Dropbox link to the real bytes.
-  const href = await page.getByRole("row", { name: /Engagement letter\.pdf/ }).getByRole("link", { name: "Download" }).getAttribute("href");
+  await fileRow(page, "Engagement letter.pdf").getByRole("button", { name: "Actions for Engagement letter.pdf" }).click();
+  const href = await page.getByRole("menuitem", { name: "Download" }).getAttribute("href");
   const res = await page.request.get(href!);
   expect(res.status()).toBe(200);
   expect(await res.text()).toBe("%PDF-1.4 engagement");
 
-  // Open goes to the file's page on Dropbox.
-  await expect(page.getByRole("row", { name: /Engagement letter\.pdf/ }).getByRole("link", { name: "Open" }))
-    .toHaveAttribute("href", /dropbox\.test\/.*Engagement%20letter\.pdf|dropbox\.test\/.*Engagement letter\.pdf/);
+  // Open goes to the file's page on Dropbox, where Open, then the app, starts the desktop app.
+  await expect(page.getByRole("menuitem", { name: /^Open in your PDF app/ })).toHaveAttribute("href", /dropbox\.test\/.*Engagement%20letter\.pdf/);
+  await page.keyboard.press("Escape");
 
   // The files are really in the team space, at the expected path.
   const tree = await (await request.get(`${FAKE}/__test/tree`)).json();
@@ -139,7 +143,7 @@ test("renaming a client flags the folder, and Rename the folder moves it with it
   await expect(page.getByText("This folder's name no longer matches the client or address.")).toBeVisible();
   await page.getByRole("button", { name: "Rename the folder" }).click();
   await expect(page.getByText("Folder moved. Its files came with it.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Engagement letter.pdf" })).toBeVisible();
+  await expect(fileName(page, "Engagement letter.pdf")).toBeVisible();
   await expect(page.getByText("This folder's name no longer matches")).toHaveCount(0);
 
   // Put the name back for later tests (the folder then shows as out of date again, which is fine).
@@ -160,7 +164,7 @@ test("a non-admin sees the connection but can't change it, and an analyst can st
 
   await openTower(page);
   await page.getByRole("tab", { name: "Files" }).click();
-  await expect(page.getByRole("link", { name: "Engagement letter.pdf" })).toBeVisible();
+  await expect(fileName(page, "Engagement letter.pdf")).toBeVisible();
 });
 
 test("adding a PIN that's already a property points to the existing one", async ({ page }) => {

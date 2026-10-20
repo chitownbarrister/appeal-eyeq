@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { closePool, getPool, query } from "./db.js";
 import { hashPassword, PASSWORD_MIN_LENGTH } from "./auth.js";
 import { seedSampleData } from "./seed/sample.js";
+import { seedAllDocumentDefaults } from "./documents.js";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "db", "migrations");
 
@@ -39,6 +40,7 @@ export async function runMigrations(log: (msg: string) => void = console.log): P
     }
   }
   if (ran.length === 0) log("Migrations: nothing new to apply");
+  await seedAllDocumentDefaults(log);
   return ran;
 }
 

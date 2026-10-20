@@ -110,7 +110,7 @@ describe("firm admins and the Operations role", () => {
   it("gives Operations its own column of permissions and retires the admin ones", async () => {
     const perms = (await call(env.base, dillon, "GET", "/api/firm/permissions")).body.permissions as { role: string; permission: string }[];
     expect(new Set(perms.map((p) => p.role))).toEqual(new Set(["attorney", "analyst", "operations"]));
-    expect(perms.filter((p) => p.role === "operations")).toHaveLength(8);
+    expect(perms.filter((p) => p.role === "operations")).toHaveLength(10);
     expect(perms.some((p) => ["users.manage", "support.grant", "settings.edit"].includes(p.permission))).toBe(false);
   });
 });
@@ -212,22 +212,25 @@ describe("connecting Dropbox", () => {
 describe("a property's Dropbox folder", () => {
   it("shows where the folder will go before it exists", async () => {
     const r = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files`);
-    expect(r.body).toEqual({ connected: true, folder: null, expectedPath: EXPECTED_TOWER });
+    expect(r.body).toMatchObject({ connected: true, folder: null, expectedPath: EXPECTED_TOWER });
   });
 
   it("creates the template in the team space, with a folder for each appeal, and never duplicates it", async () => {
     const r = await call(env.base, julie, "POST", `/api/firm/properties/${towerId}/files/ensure`, {});
-    expect(r.body).toEqual({ path: EXPECTED_TOWER, linked: true });
+    expect(r.body).toMatchObject({ path: EXPECTED_TOWER, linked: true });
     expect(fake.state.lastPathRoot).toBe(JSON.stringify({ ".tag": "root", root: "ns-team-1" }));
     const team = (await tree())["ns-team-1"];
-    for (const sub of ["Appeals/2026/BOR", "Appeals/2026/ASSR", "Appeals/2025/BOR", "Appeals/2025/ASSR", "Appeals/2024/BOR"]) {
+    for (const sub of [
+      "Engagement Agreements", "Property Documents", "Correspondence", "Evaluation Worksheets", "Billing", "Misc",
+      "Appeals/2026/Board of Review", "Appeals/2026/Assessor", "Appeals/2025/Board of Review", "Appeals/2025/Assessor", "Appeals/2024/Board of Review",
+    ]) {
       expect(team).toContain(`D ${EXPECTED_TOWER}/${sub}`);
     }
     const before = team.length;
     expect((await call(env.base, julie, "POST", `/api/firm/properties/${towerId}/files/ensure`, {})).body.linked).toBe(false);
     expect((await tree())["ns-team-1"]).toHaveLength(before);
     const list = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files?path=Appeals`);
-    expect(list.body.entries.map((e: { name: string }) => e.name)).toEqual(["2024", "2025", "2026"]);
+    expect(list.body.entries.map((e: { name: string }) => e.name)).toEqual(["2026", "2025", "2024"]); // newest year first
     expect(list.body.breadcrumbs).toEqual([{ name: "Appeals", relPath: "Appeals" }]);
     expect(list.body.folder.outOfDate).toBe(false);
   });
@@ -236,18 +239,18 @@ describe("a property's Dropbox folder", () => {
     const { withContext } = await import("../../server/db");
     await withContext({ actorKind: "system", userId: null, firmId: env.nicholsId }, (c) => c.query(`DELETE FROM property_folders WHERE firm_id = $1 AND property_id = $2`, [env.nicholsId, towerId]));
     const before = (await tree())["ns-team-1"].length;
-    expect((await call(env.base, julie, "POST", `/api/firm/properties/${towerId}/files/ensure`, {})).body).toEqual({ path: EXPECTED_TOWER, linked: true });
+    expect((await call(env.base, julie, "POST", `/api/firm/properties/${towerId}/files/ensure`, {})).body).toMatchObject({ path: EXPECTED_TOWER, linked: true });
     expect((await tree())["ns-team-1"]).toHaveLength(before);
   });
 
   it("uploads into a subfolder, keeps both copies of a repeated name, and downloads", async () => {
-    const r = await upload(julie, towerId, "Appeals/2026/BOR", "Decision – 2026 BOR.pdf", "%PDF-1 sample");
-    expect(r).toEqual({ status: 201, body: { name: "Decision – 2026 BOR.pdf", size: 13 } });
-    expect((await upload(julie, towerId, "Appeals/2026/BOR", "Decision – 2026 BOR.pdf", "second")).body.name).toBe("Decision – 2026 BOR (1).pdf");
-    const list = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files?path=Appeals/2026/BOR`);
+    const r = await upload(julie, towerId, "Appeals/2026/Board of Review", "Decision – 2026 BOR.pdf", "%PDF-1 sample");
+    expect(r).toMatchObject({ status: 201, body: { name: "Decision – 2026 BOR.pdf", size: 13 } });
+    expect((await upload(julie, towerId, "Appeals/2026/Board of Review", "Decision – 2026 BOR.pdf", "second")).body.name).toBe("Decision – 2026 BOR (1).pdf");
+    const list = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files?path=${encodeURIComponent("Appeals/2026/Board of Review")}`);
     const file = list.body.entries.find((e: { name: string }) => e.name === "Decision – 2026 BOR.pdf");
-    expect(file).toMatchObject({ kind: "file", size: 13, relPath: "Appeals/2026/BOR/Decision – 2026 BOR.pdf" });
-    expect(file.webUrl).toBe(`https://www.dropbox.test/home${EXPECTED_TOWER.split("/").map(encodeURIComponent).join("/")}/Appeals/2026/BOR?preview=Decision%20%E2%80%93%202026%20BOR.pdf`);
+    expect(file).toMatchObject({ kind: "file", size: 13, relPath: "Appeals/2026/Board of Review/Decision – 2026 BOR.pdf" });
+    expect(file.webUrl).toBe(`https://www.dropbox.test/home${EXPECTED_TOWER.split("/").map(encodeURIComponent).join("/")}/Appeals/2026/Board%20of%20Review?preview=Decision%20%E2%80%93%202026%20BOR.pdf`);
     const dl = await fetch(`${env.base}/api/firm/properties/${towerId}/files/download?${new URLSearchParams({ path: file.relPath })}`, { redirect: "manual", headers: { Cookie: julie } });
     expect(dl.status).toBe(302);
     expect(await (await fetch(dl.headers.get("location")!)).text()).toBe("%PDF-1 sample");
@@ -268,7 +271,7 @@ describe("a property's Dropbox folder", () => {
     expect(stale.body.expectedPath).toBe("/Appeal EyeQ/Nichols Family Trust/05-17-302-010 – 1044 Tower Road, Winnetka (New Trier)");
     const moved = await call(env.base, julie, "POST", `/api/firm/properties/${towerId}/files/move`, {});
     expect(moved.body.path).toBe(stale.body.expectedPath);
-    const after = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files?path=Appeals/2026/BOR`);
+    const after = await call(env.base, julie, "GET", `/api/firm/properties/${towerId}/files?path=${encodeURIComponent("Appeals/2026/Board of Review")}`);
     expect(after.body.folder.outOfDate).toBe(false);
     expect(after.body.entries).toHaveLength(2);
     await call(env.base, dillon, "PATCH", `/api/firm/accounts/${accountId}`, { name: "Nichols, Dillon" });

@@ -100,7 +100,7 @@ test("creating a property with a new client, then finding it with global search"
   await expect(page.locator(".facts")).toContainText("Level of assessment25%");
   await expect(page.locator(".txlvl.cur")).toContainText("Assessor");
 
-  const search = page.getByLabel("Search properties, clients and appeals");
+  const search = page.getByLabel("Search properties, clients, appeals and documents");
   await search.fill("lakeview");
   await expect(page.getByRole("option", { name: /Lakeview Holdings LLC/ })).toBeVisible();
   await search.press("Enter");

@@ -7,49 +7,21 @@
 // on every file route, even while a firm has granted read-only access.
 
 import { randomBytes } from "node:crypto";
-import express, { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { withContext } from "../db.js";
-import { requireFirmAdmin, requirePermission } from "../auth.js";
-import { matterTitle } from "../../shared/domain.js";
+import { requireFirmAdmin } from "../auth.js";
 import { encryptSecret, hasEncryptionKey, sign, verify } from "../secrets.js";
 import {
-  DropboxError, DROPBOX_SCOPES, FirmDropbox, dropboxConfigured, dropboxUrls, exchangeToken, loadIntegration, rpcWithToken,
+  DROPBOX_SCOPES, FirmDropbox, dropboxConfigured, dropboxUrls, exchangeToken, loadIntegration, rpcWithToken,
 } from "../dropbox/client.js";
-import {
-  LEVEL_FOLDER, cleanRelative, ensureFolder, expectedPropertyPath, friendlyDropboxError, joinPath, listFolder, locate, moveFolder,
-  safeName, temporaryLink, webUrl,
-} from "../dropbox/folders.js";
+import { joinPath, safeName } from "../dropbox/folders.js";
+import { propertyFilesRouter } from "./property-files.js";
+import { documentsAdminRouter } from "./documents-admin.js";
 
 export const filesRouter = Router();
 
 const STATE_COOKIE = "aeq_dbx";
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
-function noSupportAccess(req: Request, res: Response, next: NextFunction): void {
-  if (req.auth?.user.isSuperAdmin) {
-    res.status(403).json({ error: "Client files aren't available under support access." });
-    return;
-  }
-  next();
-}
-
-function idParam(req: Request): number | null {
-  const n = Number(req.params.id);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-/** Turns a Dropbox failure into a plain message for the user. */
-async function dropboxCall<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    const friendly = friendlyDropboxError(err);
-    if (friendly) throw Object.assign(new Error("dropbox"), friendly);
-    throw err;
-  }
-}
-
 function redirectUri(req: Request): string {
   const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
   return `${base.replace(/\/$/, "")}/api/firm/dropbox/callback`;
@@ -208,176 +180,9 @@ filesRouter.delete("/integrations/dropbox", requireFirmAdmin, async (req, res) =
   res.json({ ok: true });
 });
 
-// ================================================================ a property's folder
-interface PropertyForFiles { id: number; title: string; client: string; appeals: { assessment_year: number; level: keyof typeof LEVEL_FOLDER }[] }
-
-async function propertyForFiles(req: Request, pid: number): Promise<{ p: PropertyForFiles; link: { folder_id: string; path_display: string } | null } | null> {
-  return withContext(req.ctx!, async (c) => {
-    const p = (await c.query(
-      `SELECT p.id, p.name, p.address1, p.city, t.name AS township, ac.name AS client,
-              (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin
-         FROM properties p JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
-         LEFT JOIN townships t ON t.id = p.township_id
-        WHERE p.firm_id = $1 AND p.id = $2`,
-      [req.ctx!.firmId, pid],
-    )).rows[0];
-    if (!p) return null;
-    const appeals = (await c.query(`SELECT DISTINCT assessment_year, level FROM appeals WHERE firm_id = $1 AND property_id = $2`, [req.ctx!.firmId, pid])).rows;
-    const link = (await c.query(`SELECT folder_id, path_display FROM property_folders WHERE firm_id = $1 AND property_id = $2 AND provider = 'dropbox'`, [req.ctx!.firmId, pid])).rows[0] ?? null;
-    return { p: { id: p.id, title: matterTitle(p.pin, p.address1 || p.name, p.city, p.township), client: p.client, appeals }, link };
-  });
-}
-
-/** Finds the property's linked folder where it is now (following renames), or null if it's gone. */
-async function currentFolder(req: Request, dbx: FirmDropbox, pid: number, link: { folder_id: string; path_display: string } | null) {
-  if (!link) return null;
-  const now = await locate(dbx, link.folder_id);
-  if (!now) {
-    await withContext(req.ctx!, (c) => c.query(`DELETE FROM property_folders WHERE firm_id = $1 AND property_id = $2 AND provider = 'dropbox'`, [req.ctx!.firmId, pid]));
-    return null;
-  }
-  if (now.path_display !== link.path_display) {
-    await withContext(req.ctx!, (c) => c.query(`UPDATE property_folders SET path_display = $3 WHERE firm_id = $1 AND property_id = $2 AND provider = 'dropbox'`, [req.ctx!.firmId, pid, now.path_display]));
-  }
-  return now;
-}
-
-function breadcrumbs(rel: string): { name: string; relPath: string }[] {
-  const parts = rel ? rel.split("/") : [];
-  return parts.map((name, i) => ({ name, relPath: parts.slice(0, i + 1).join("/") }));
-}
-
-filesRouter.get("/properties/:id/files", noSupportAccess, async (req, res) => {
-  const pid = idParam(req);
-  if (!pid) { res.status(400).json({ error: "Invalid property." }); return; }
-  const rel = cleanRelative(String(req.query.path ?? ""));
-  const found = await propertyForFiles(req, pid);
-  if (!found) { res.status(404).json({ error: "Property not found." }); return; }
-  const dbx = await FirmDropbox.open(req.ctx!);
-  if (!dbx) {
-    res.json({ connected: false, configured: dropboxConfigured() && hasEncryptionKey() });
-    return;
-  }
-  const expected = expectedPropertyPath(dbx.integration.root_folder, found.p.client, found.p.title);
-  const folder = await dropboxCall(() => currentFolder(req, dbx, pid, found.link));
-  if (!folder) {
-    res.json({ connected: true, folder: null, expectedPath: expected });
-    return;
-  }
-  const entries = await dropboxCall(() => listFolder(dbx, folder.path_display, rel));
-  res.json({
-    connected: true,
-    folder: {
-      path: folder.path_display,
-      webUrl: webUrl(rel ? joinPath(folder.path_display, rel) : folder.path_display, false),
-      outOfDate: folder.path_display.toLowerCase() !== expected.toLowerCase(),
-    },
-    expectedPath: expected,
-    path: rel,
-    breadcrumbs: breadcrumbs(rel),
-    entries,
-  });
-});
-
-/** Creates the property's folder from the template (or links the one already at that path) and the folders for each appeal. */
-filesRouter.post("/properties/:id/files/ensure", noSupportAccess, requirePermission("properties.edit"), async (req, res) => {
-  const pid = idParam(req);
-  if (!pid) { res.status(400).json({ error: "Invalid property." }); return; }
-  const found = await propertyForFiles(req, pid);
-  if (!found) { res.status(404).json({ error: "Property not found." }); return; }
-  const dbx = await FirmDropbox.open(req.ctx!);
-  if (!dbx) { res.status(409).json({ error: "Dropbox isn't connected. A firm admin can connect it in Settings, Integrations." }); return; }
-  const expected = expectedPropertyPath(dbx.integration.root_folder, found.p.client, found.p.title);
-  const result = await dropboxCall(async () => {
-    let folder = await currentFolder(req, dbx, pid, found.link);
-    let created = false;
-    if (!folder) {
-      const made = await ensureFolder(dbx, expected);
-      folder = made;
-      created = true;
-      await withContext(req.ctx!, (c) =>
-        c.query(
-          `INSERT INTO property_folders (firm_id, property_id, provider, folder_id, path_display) VALUES ($1, $2, 'dropbox', $3, $4)
-           ON CONFLICT (firm_id, property_id, provider) DO UPDATE SET folder_id = EXCLUDED.folder_id, path_display = EXCLUDED.path_display`,
-          [req.ctx!.firmId, pid, made.id, made.path_display],
-        ),
-      );
-    }
-    for (const a of found.p.appeals) {
-      await ensureFolder(dbx, joinPath(folder.path_display, "Appeals", String(a.assessment_year), LEVEL_FOLDER[a.level]));
-    }
-    if (!found.p.appeals.length) await ensureFolder(dbx, joinPath(folder.path_display, "Appeals"));
-    return { folder, created };
-  });
-  res.json({ path: result.folder.path_display, linked: result.created });
-});
-
-/** Moves the folder to the name the template gives it now (after a client or address change). */
-filesRouter.post("/properties/:id/files/move", noSupportAccess, requirePermission("properties.edit"), async (req, res) => {
-  const pid = idParam(req);
-  if (!pid) { res.status(400).json({ error: "Invalid property." }); return; }
-  const found = await propertyForFiles(req, pid);
-  if (!found) { res.status(404).json({ error: "Property not found." }); return; }
-  const dbx = await FirmDropbox.open(req.ctx!);
-  if (!dbx) { res.status(409).json({ error: "Dropbox isn't connected." }); return; }
-  const expected = expectedPropertyPath(dbx.integration.root_folder, found.p.client, found.p.title);
-  const moved = await dropboxCall(async () => {
-    const folder = await currentFolder(req, dbx, pid, found.link);
-    if (!folder) throw Object.assign(new Error("none"), { status: 404, publicMessage: "This property has no Dropbox folder yet." });
-    if (folder.path_display.toLowerCase() === expected.toLowerCase()) return folder;
-    try {
-      return await moveFolder(dbx, folder.id, expected);
-    } catch (err) {
-      if (err instanceof DropboxError && err.tag.includes("conflict")) {
-        throw Object.assign(new Error("taken"), { status: 409, publicMessage: `A folder already exists at ${expected}. Merge or rename it in Dropbox, then try again.` });
-      }
-      throw err;
-    }
-  });
-  await withContext(req.ctx!, (c) =>
-    c.query(`UPDATE property_folders SET path_display = $3 WHERE firm_id = $1 AND property_id = $2 AND provider = 'dropbox'`, [req.ctx!.firmId, pid, moved.path_display]),
-  );
-  res.json({ path: moved.path_display });
-});
-
-filesRouter.post(
-  "/properties/:id/files/upload",
-  noSupportAccess,
-  requirePermission("properties.edit"),
-  express.raw({ type: "application/octet-stream", limit: MAX_UPLOAD_BYTES }),
-  async (req, res) => {
-    const pid = idParam(req);
-    if (!pid) { res.status(400).json({ error: "Invalid property." }); return; }
-    const rel = cleanRelative(String(req.query.path ?? ""));
-    const name = safeName(String(req.query.name ?? ""));
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) { res.status(400).json({ error: "The file is empty." }); return; }
-    const found = await propertyForFiles(req, pid);
-    if (!found) { res.status(404).json({ error: "Property not found." }); return; }
-    const dbx = await FirmDropbox.open(req.ctx!);
-    if (!dbx) { res.status(409).json({ error: "Dropbox isn't connected." }); return; }
-    const saved = await dropboxCall(async () => {
-      const folder = await currentFolder(req, dbx, pid, found.link);
-      if (!folder) throw Object.assign(new Error("none"), { status: 409, publicMessage: "Create this property's Dropbox folder first." });
-      return dbx.upload(joinPath(folder.path_display, rel, name), req.body as Buffer);
-    });
-    res.status(201).json({ name: saved.name, size: saved.size });
-  },
-);
-
-/** Downloads a file through a short-lived Dropbox link. */
-filesRouter.get("/properties/:id/files/download", noSupportAccess, async (req, res) => {
-  const pid = idParam(req);
-  if (!pid) { res.status(400).json({ error: "Invalid property." }); return; }
-  const rel = cleanRelative(String(req.query.path ?? ""));
-  if (!rel) { res.status(400).json({ error: "Choose a file." }); return; }
-  const found = await propertyForFiles(req, pid);
-  if (!found) { res.status(404).json({ error: "Property not found." }); return; }
-  const dbx = await FirmDropbox.open(req.ctx!);
-  if (!dbx) { res.status(409).json({ error: "Dropbox isn't connected." }); return; }
-  const link = await dropboxCall(async () => {
-    const folder = await currentFolder(req, dbx, pid, found.link);
-    if (!folder) throw Object.assign(new Error("none"), { status: 404, publicMessage: "This property has no Dropbox folder yet." });
-    return temporaryLink(dbx, joinPath(folder.path_display, rel));
-  });
-  res.redirect(302, link);
-});
+// ================================================================ a property's documents
+// The property routes (browse, template, folders, rename, delete and restore, upload, previews,
+// profiles, versions, Deadzone) live in property-files.ts; the firm's template and document
+// types in documents-admin.ts.
+filesRouter.use(propertyFilesRouter);
+filesRouter.use(documentsAdminRouter);
