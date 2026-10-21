@@ -9,7 +9,7 @@ import type pg from "pg";
 import { z } from "zod";
 import { withContext } from "../db.js";
 import { requirePermission } from "../auth.js";
-import { LEVELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, pinKey, type Level } from "../../shared/domain.js";
+import { LEVELS, LEVEL_LABELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, pinKey, type Level } from "../../shared/domain.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js";
@@ -18,6 +18,7 @@ import { todayIso } from "../today.js";
 import { LEVEL_SHORT, WINDOW_ACTIVE_SUBSTAGES, buildDeadlineList, windowItem, type DeadlineRow } from "../deadlines.js";
 import { applyRollover, refreshAppealFromPins, rolloverIntoNewAppeal, seedPinsForNewAppeal } from "../appeal-pins.js";
 import { ensureAppealFolder } from "./property-files.js";
+import { detachLetters } from "../decisions/apply.js";
 
 export const mattersRouter = Router();
 
@@ -312,7 +313,14 @@ mattersRouter.get("/properties/:id", async (req, res) => {
     )).rows;
     const cur = appeals[0] ?? null;
     const win = cur ? await windowFor(c, p.county_id, p.township_id, cur.level, cur.assessment_year) : null;
-    return { p, parcels, appeals, contacts, activities, reference, feeDefaults, deadlineRows, cur, win };
+    const letters = (await c.query(
+      `SELECT l.id, l.status, l.kind, l.appeal_id, l.applied_at, l.filed_path, l.file_error, l.document_id, l.fields->>'letterDate' AS letter_date
+         FROM decision_letters l JOIN decision_uploads u ON u.firm_id = l.firm_id AND u.id = l.upload_id
+        WHERE l.firm_id = $1 AND (l.property_id = $2 OR u.property_id = $2) AND l.status <> 'dismissed'
+        ORDER BY l.id DESC`,
+      [firmId, pid],
+    )).rows;
+    return { p, parcels, appeals, contacts, activities, reference, feeDefaults, deadlineRows, cur, win, letters };
   });
   if (!data) {
     res.status(404).json({ error: "Property not found." });
@@ -342,6 +350,10 @@ mattersRouter.get("/properties/:id", async (req, res) => {
       .map((a) => ({ appealId: a.id, year: a.assessment_year, docket: a.petition_no ?? null }))
       .sort((x, y) => x.year - y.year),
     today,
+    decisionLetters: data.letters.map((l) => ({
+      id: l.id, status: l.status, kind: l.kind, appealId: l.appeal_id, appliedAt: l.applied_at, letterDate: l.letter_date,
+      filedPath: l.filed_path, fileError: l.file_error, filed: l.document_id !== null,
+    })),
     contacts: data.contacts,
     activities: data.activities,
     reference: data.reference,
@@ -410,7 +422,11 @@ mattersRouter.patch("/properties/:id", requirePermission("properties.edit"), asy
 mattersRouter.delete("/properties/:id", requirePermission("properties.delete"), async (req, res) => {
   const pid = idParam(req);
   if (!pid) return bad(res, "Invalid property.");
-  const r = await withContext(req.ctx!, (c) => c.query(`DELETE FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]));
+  const r = await withContext(req.ctx!, async (c) => {
+    // Decision letters matched to it go back to review instead of blocking the delete.
+    await detachLetters(c, req.ctx!.firmId!, { propertyId: pid });
+    return c.query(`DELETE FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]);
+  });
   if (!r.rowCount) {
     res.status(404).json({ error: "Property not found." });
     return;
@@ -634,6 +650,46 @@ const UpdateAppeal = z.object({
   nextActionOn: optDate,
 }).strict();
 
+const NEXT_LEVELS: Record<Level, Level[]> = { assessor: ["bor"], bor: ["ptab", "circuit"], ptab: [], circuit: [] };
+
+/**
+ * Pushes an appeal on to the next level for the same assessment year: marks it Pushed to next
+ * level and creates the next level's appeal (or returns the one already there). Assessor goes to
+ * the Board of Review; the Board of Review goes to PTAB, or the Circuit Court instead.
+ */
+export async function startNextLevel(c: pg.PoolClient, req: Request, appealId: number, level?: Level): Promise<{ appealId: number; propertyId: number; created: boolean }> {
+  const firmId = req.ctx!.firmId!;
+  const a = (await c.query<{ id: number; property_id: number; assessment_year: number; level: Level; substage: string }>(
+    `SELECT id, property_id, assessment_year, level, substage FROM appeals WHERE firm_id = $1 AND id = $2 FOR UPDATE`, [firmId, appealId],
+  )).rows[0];
+  if (!a) throw Object.assign(new Error("appeal"), { status: 404, publicMessage: "Appeal not found." });
+  const next = level ?? NEXT_LEVELS[a.level][0];
+  if (!next || !NEXT_LEVELS[a.level].includes(next)) {
+    throw Object.assign(new Error("level"), { status: 400, publicMessage: `A ${LEVEL_LABELS[a.level]} appeal can't go on to that level.` });
+  }
+  const existing = (await c.query<{ id: number }>(
+    `SELECT id FROM appeals WHERE firm_id = $1 AND property_id = $2 AND assessment_year = $3 AND level = $4 ORDER BY (parcel_id IS NULL) DESC, id LIMIT 1`,
+    [firmId, a.property_id, a.assessment_year, next],
+  )).rows[0];
+  if (a.substage !== "pushed_next_level" && a.substage !== "closed" && a.level !== "ptab" && a.level !== "circuit") {
+    await c.query(`UPDATE appeals SET substage = 'pushed_next_level', substage_since = now() WHERE firm_id = $1 AND id = $2`, [firmId, a.id]);
+  }
+  if (existing) return { appealId: existing.id, propertyId: a.property_id, created: false };
+  const id = await createAppeal(c, req, a.property_id, { assessmentYear: a.assessment_year, level: next });
+  return { appealId: id, propertyId: a.property_id, created: true };
+}
+
+mattersRouter.post("/appeals/:id/next-level", requirePermission("appeals.edit"), async (req, res) => {
+  const aid = idParam(req);
+  if (!aid) return bad(res, "Invalid appeal.");
+  const parsed = z.object({ level: z.enum(LEVELS).optional() }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) return bad(res, parsed.error);
+  const r = await withContext(req.ctx!, (c) => startNextLevel(c, req, aid, parsed.data.level));
+  const yr = await withContext(req.ctx!, async (c) => (await c.query<{ assessment_year: number; level: Level }>(`SELECT assessment_year, level FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, r.appealId])).rows[0]);
+  const folder = r.created ? await ensureAppealFolder(req, r.propertyId, yr.assessment_year, yr.level).catch(() => null) : null;
+  res.status(r.created ? 201 : 200).json({ id: r.appealId, created: r.created, folder });
+});
+
 mattersRouter.get("/appeals/:id", async (req, res) => {
   const aid = idParam(req);
   if (!aid) return bad(res, "Invalid appeal.");
@@ -776,8 +832,10 @@ mattersRouter.delete("/appeals/:id", requirePermission("appeals.edit"), async (r
   const aid = idParam(req);
   if (!aid) return bad(res, "Invalid appeal.");
   const r = await withContext(req.ctx!, async (c) => {
-    // Appeals whose target rolled over from this one keep the values but lose the link.
+    // Appeals whose target rolled over from this one keep the values but lose the link,
+    // and decision letters matched to it go back to review.
     await c.query(`UPDATE appeals SET target_source_appeal_id = NULL WHERE firm_id = $1 AND target_source_appeal_id = $2`, [req.ctx!.firmId, aid]);
+    await detachLetters(c, req.ctx!.firmId!, { appealId: aid });
     return c.query(`DELETE FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]);
   });
   if (!r.rowCount) { res.status(404).json({ error: "Appeal not found." }); return; }

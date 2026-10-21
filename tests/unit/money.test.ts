@@ -62,6 +62,6 @@ describe("rounding and parsing", () => {
   it("formats money with 2 decimals and grouping", () => {
     expect(formatMoney("274084.32")).toBe("$274,084.32");
     expect(formatMoney("0")).toBe("$0.00");
-    expect(formatMoney("-12.5")).toBe("-$12.50");
+    expect(formatMoney("-12.5")).toBe("($12.50)");
   });
 });

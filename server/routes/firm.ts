@@ -13,6 +13,7 @@ import { appealValuesRouter } from "./appeal-values.js";
 import { calendarRouter } from "./calendar.js";
 import { dashboardRouter } from "./dashboard.js";
 import { filesRouter } from "./files.js";
+import { decisionsRouter } from "./decisions.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
@@ -21,6 +22,7 @@ firmRouter.use(appealValuesRouter);
 firmRouter.use(calendarRouter);
 firmRouter.use(dashboardRouter);
 firmRouter.use(filesRouter);
+firmRouter.use(decisionsRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

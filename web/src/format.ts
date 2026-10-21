@@ -1,19 +1,21 @@
-import { centsToString, formatMoney, toCents } from "../../shared/money";
+import { formatMoney, formatValueAmount } from "../../shared/money";
 
 export { formatMoney };
 
+// Each person chooses whether assessed and market values show cents (Your account).
+let valueCents = false;
+export function setValueCents(on: boolean): void { valueCents = on; }
+export function valueCentsOn(): boolean { return valueCents; }
+
 /**
- * Assessed and market values are valuations, shown as whole numbers the way
- * notices and the prior software show them ("70,000"). Any cents are kept.
- * Taxes, savings and fees always use formatMoney (2 decimals).
+ * Assessed and market values (AV, FMV, land, building, offers) in accounting format:
+ * "$70,000", whole dollars the way notices print them, with any cents kept so PINs
+ * visibly add up ("$19,000.33"), or always with cents for someone who chose that.
+ * Negatives in parentheses: "($1,250)". Taxes, savings and fees use formatMoney (2 decimals).
  */
 export function formatValue(v: string | number | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
-  const s = centsToString(toCents(String(v)));
-  const [whole, frac] = s.split(".");
-  const neg = whole.startsWith("-");
-  const grouped = (neg ? whole.slice(1) : whole).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${neg ? "-" : ""}${grouped}${frac === "00" ? "" : `.${frac}`}`;
+  return formatValueAmount(String(v), valueCents);
 }
 
 /** Fair market value from AV and the level of assessment, to the penny (33.33% is one third exactly). */
@@ -54,9 +56,11 @@ export function nn(v: string | null | undefined): string | null {
   return v === undefined || v === null || v.trim() === "" ? null : v.trim();
 }
 
-/** Strip commas and dollar signs a user may type into a number field. */
+/** Strip commas and dollar signs a user may type into a number field; "(1,250)" is negative. */
 export function cleanNumber(v: string): string {
-  return v.replace(/[$,\s]/g, "");
+  const neg = /^\s*\(.*\)\s*$/.test(v);
+  const s = v.replace(/[$,\s()]/g, "");
+  return neg && s && !s.startsWith("-") ? `-${s}` : s;
 }
 
 /**

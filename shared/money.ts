@@ -113,12 +113,27 @@ export function sumMoney(values: DecimalInput[]): string {
   return centsToString(values.reduce<bigint>((acc, v) => acc + toCents(v), 0n));
 }
 
-/** Display: "$1,736.12" (always 2 decimals). */
+/** Display: "$1,736.12" (always 2 decimals). Negatives in parentheses, the accounting way: "($12.50)". */
 export function formatMoney(input: DecimalInput | null | undefined): string {
   if (input === null || input === undefined || input === "") return "";
+  return accounting(centsToString(toCents(input)), true);
+}
+
+/**
+ * Display for assessed and market values (AV, FMV, land, building, offers): "$61,875",
+ * whole dollars the way notices print them, with any cents kept ("$19,000.33") so PINs
+ * always visibly add up. alwaysCents shows ".00" too (a per-user choice). Negatives in parentheses.
+ */
+export function formatValueAmount(input: DecimalInput | null | undefined, alwaysCents = false): string {
+  if (input === null || input === undefined || input === "") return "";
   const s = centsToString(toCents(input));
+  return accounting(s, alwaysCents || !s.endsWith(".00"));
+}
+
+function accounting(s: string, withCents: boolean): string {
   const negative = s.startsWith("-");
   const [whole, frac] = (negative ? s.slice(1) : s).split(".");
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${negative ? "-" : ""}$${grouped}.${frac}`;
+  const body = `$${grouped}${withCents ? `.${frac}` : ""}`;
+  return negative ? `(${body})` : body;
 }

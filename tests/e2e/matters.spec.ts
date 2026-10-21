@@ -127,6 +127,8 @@ test("when the session ends while a page is open, the app returns to sign-in wit
   await signIn(page);
   await page.goto("/properties");
   await expect(page.getByText(/\d+ of \d+/)).toBeVisible();
+  // Let the page's own loads (the summary strip) finish, so only the click below meets the ended session.
+  await page.waitForLoadState("networkidle");
   await page.request.post("/api/auth/logout", { data: {} });
   await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Accounts" }).click();
   await expect(page.getByText("Your session ended, so you've been signed out.")).toBeVisible();

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, errorText } from "../api";
 import { cleanNumber, formatDate, formatDateTime, formatValue, nn } from "../format";
+import { AmountInput } from "./MoneyInput";
 import { centsToString, toCents } from "../../../shared/money";
 import { fmvFromAv, pinAv, requestedAchieved } from "../../../shared/pins";
 import type { Level } from "../../../shared/domain";
@@ -156,10 +157,10 @@ export function PinValues({ appealId, level, ratio, canEdit, onTotals, register,
     if (!editable(st, x)) return <span className="num meta">{formatValue(nn(cleanNumber(src[part])))}</span>;
     const v = x[st][part];
     return (
-      <input
-        className="in num" style={{ height: 28, ...(ok(v) ? {} : { borderColor: "var(--crit)" }) }} inputMode="decimal" value={v}
+      <AmountInput
+        className="in num" style={{ height: 28, ...(ok(v) ? {} : { borderColor: "var(--crit)" }) }} value={v}
         aria-label={`${p.pin} ${STAGES.find((z) => z[0] === st)![1]} ${part === "impr" ? "building" : part === "av" ? "AV" : "land"}`}
-        onChange={(e) => setCell(p.parcelId, st, part, e.target.value)}
+        onChange={(nv) => setCell(p.parcelId, st, part, nv)}
       />
     );
   };
@@ -221,7 +222,7 @@ export function PinValues({ appealId, level, ratio, canEdit, onTotals, register,
             </select>
           </div>
           <div className="fld"><label htmlFor="dv-amt">{divide.basis === "fmv" ? "Market value" : "Total AV"} for the PINs on the appeal</label>
-            <input id="dv-amt" className="in num" inputMode="decimal" value={divide.amount} onChange={(e) => setDivide({ ...divide, amount: e.target.value })} />
+            <AmountInput id="dv-amt" value={divide.amount} onChange={(v) => setDivide({ ...divide, amount: v })} />
           </div>
           <button className="btn small" disabled={!cleanNumber(divide.amount) || !ok(divide.amount)}>Divide</button>
           <button type="button" className="btn small secondary" onClick={() => setDivide(null)}>Cancel</button>
@@ -369,7 +370,7 @@ function OfferLog({ appealId, level, d, canEdit, locked, act }: {
           <div className="fld"><label htmlFor="of-basis">As</label>
             <select id="of-basis" className="in" value={f.basis} onChange={(e) => setF({ ...f, basis: e.target.value as "fmv" | "av" })}><option value="fmv">Market value</option><option value="av">Total AV</option></select>
           </div>
-          <div className="fld"><label htmlFor="of-amt">Amount</label><input id="of-amt" className="in num" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+          <div className="fld"><label htmlFor="of-amt">Amount</label><AmountInput id="of-amt" value={f.amount} onChange={(v) => setF({ ...f, amount: v })} /></div>
           <div className="fld grow"><label htmlFor="of-note">Note</label><input id="of-note" className="in" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
           <button className="btn small" disabled={!cleanNumber(f.amount) || !ok(f.amount)}>Record offer</button>
         </form>

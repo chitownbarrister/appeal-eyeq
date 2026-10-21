@@ -173,8 +173,8 @@ async function seedPins(c: pg.PoolClient, firmId: number, properties: Record<str
 }
 
 /**
- * Puts the sample firm back to its starting data: deletes every client,
- * property, appeal, contact, task and deadline, restores the default fees,
+ * Puts the sample firm back to its starting data: deletes every decision letter
+ * upload, client, property, appeal, contact, task and deadline, restores the default fees,
  * and loads the sample set again. Users, permissions and the audit trail
  * are kept. Runs as the signed-in firm user, so the tenant lock applies,
  * and refuses any firm not flagged as a sample.
@@ -182,7 +182,8 @@ async function seedPins(c: pg.PoolClient, firmId: number, properties: Record<str
 export async function resetSampleFirm(c: pg.PoolClient, firmId: number): Promise<void> {
   const firm = (await c.query<{ is_sample: boolean }>(`SELECT is_sample FROM firms WHERE id = $1`, [firmId])).rows[0];
   if (!firm?.is_sample) throw Object.assign(new Error("not sample"), { status: 403, publicMessage: "Only a sample firm can be reset." });
-  for (const t of ["deadlines", "activities", "contacts", "appeals", "parcels", "properties", "accounts"]) {
+  // Decision uploads first (their letters and stored scans go with them), since letters point at appeals.
+  for (const t of ["decision_uploads", "deadlines", "activities", "contacts", "appeals", "parcels", "properties", "accounts"]) {
     await c.query(`DELETE FROM ${t} WHERE firm_id = $1`, [firmId]);
   }
   for (const f of DEFAULT_FEES) {

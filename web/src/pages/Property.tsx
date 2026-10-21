@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, errorText } from "../api";
 import { useSession } from "../App";
@@ -15,6 +15,8 @@ import { ValuesEditor } from "../components/ValuesEditor";
 import { Sheet } from "../components/Sheet";
 import { DeadlinesBlock, DeadlineSheet } from "../components/Deadlines";
 import { FilesTab } from "../components/Files";
+import { KIND_LABELS, LetterSheet, type LetterSummary } from "../components/DecisionLetter";
+import { uploadDecisionFiles } from "./Decisions";
 
 export interface AppealRow {
   id: number; property_id: number; parcel_id: number | null; assessment_year: number; tax_year: number; level: Level; substage: Substage;
@@ -25,6 +27,7 @@ export interface AppealRow {
   original_tax: string | null; target_tax: string | null; resolved_tax: string | null; estimated_savings: string | null; savings: string | null;
   calc_override: boolean; exclude_from_totals: boolean; fee_percent: string | null; next_action: string | null; next_action_on: string | null;
   days_in_substage: number; fee: EffectiveFee; fee_amount: string | null; estimated_fee: string | null; data_source: string;
+  refund_status: "awaiting" | "received" | null; refund_expected: string | null; refund_received: string | null;
   [key: string]: unknown;
 }
 interface Parcel { id: number; pin: string; alternate_pin: string | null; owner_name: string | null; parcel_type: string; class: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; is_primary: boolean; active: boolean }
@@ -46,7 +49,9 @@ interface Detail {
   reference: { rate: { taxYear: number; ratePercent: string; source: string } | null; equalizer: { year: number; factor: string; source: string } | null };
   fees: { firstYear: EffectiveFee; refund: EffectiveFee };
   pendingPtab: { appealId: number; year: number; docket: string | null }[];
+  decisionLetters: PropertyLetter[];
 }
+interface PropertyLetter { id: number; status: "review" | "clean" | "applied"; kind: LetterSummary["kind"]; appealId: number | null; appliedAt: string | null; letterDate: string | null; filedPath: string | null; fileError: string | null; filed: boolean }
 
 type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "files";
 const TABS: { id: Tab; label: string; soon?: string }[] = [
@@ -75,6 +80,9 @@ export function Property() {
   const [deadline, setDeadline] = useState<DeadlineItem | "new" | null>(null);
   const [trackError, setTrackError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [letterOpen, setLetterOpen] = useState<number | null>(null);
+  const [reading, setReading] = useState("");
+  const letterInput = useRef<HTMLInputElement>(null);
 
   const appeals = useMemo(() => data?.appeals ?? [], [data]);
   const years = useMemo(() => [...new Set(appeals.map((a) => a.assessment_year))].sort((a, b) => b - a), [appeals]);
@@ -97,13 +105,9 @@ export function Property() {
   async function setSubstage(a: AppealRow, substage: Substage) {
     setTrackError("");
     try {
-      await api(`/firm/appeals/${a.id}`, { method: "PATCH", body: { substage } });
-      if (substage === "pushed_next_level") {
-        const nextLevel: Level = a.level === "assessor" ? "bor" : "ptab";
-        if (!appeals.some((x) => x.assessment_year === a.assessment_year && x.level === nextLevel)) {
-          await api(`/firm/properties/${a.property_id}/appeals`, { method: "POST", body: { assessmentYear: a.assessment_year, level: nextLevel } });
-        }
-      }
+      // Pushing on marks this level and starts the next one (Assessor to BOR, BOR to PTAB) in one step.
+      if (substage === "pushed_next_level") await api(`/firm/appeals/${a.id}/next-level`, { method: "POST", body: {} });
+      else await api(`/firm/appeals/${a.id}`, { method: "PATCH", body: { substage } });
       await refreshAll();
     } catch (err) {
       setTrackError(errorText(err));
@@ -113,11 +117,48 @@ export function Property() {
   async function startLevel(level: Level) {
     setTrackError("");
     try {
-      const r = await api<{ id: number }>(`/firm/properties/${id}/appeals`, { method: "POST", body: { assessmentYear: activeYear, level } });
+      const prevLevel: Level | null = level === "bor" ? "assessor" : level === "ptab" || level === "circuit" ? "bor" : null;
+      const prev = prevLevel ? appeals.find((x) => x.assessment_year === activeYear && x.level === prevLevel) : undefined;
+      const r = prev
+        ? await api<{ id: number }>(`/firm/appeals/${prev.id}/next-level`, { method: "POST", body: { level } })
+        : await api<{ id: number }>(`/firm/properties/${id}/appeals`, { method: "POST", body: { assessmentYear: activeYear, level } });
       await refreshAll();
       setSelected(r.id);
     } catch (err) {
       setTrackError(errorText(err));
+    }
+  }
+
+  /** Reads decision letters uploaded here, then opens the first one to check and apply. */
+  async function uploadLetters(files: File[]) {
+    setTrackError("");
+    const pid = Number(id);
+    try {
+      setReading(`Uploading ${files.length === 1 ? files[0].name : `${files.length} files`}`);
+      const ids = await uploadDecisionFiles(files, pid);
+      type Q = { uploads: { id: number; status: string; page_count: number | null; pages_read: number; error: string | null }[]; letters: LetterSummary[] };
+      for (let i = 0; i < 600; i++) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const q = await api<Q>(`/firm/decisions?view=review&recheck=0&propertyId=${pid}`);
+        const ups = q.uploads.filter((u) => ids.includes(u.id));
+        const left = ups.filter((u) => u.status === "queued" || u.status === "reading");
+        if (!left.length) {
+          const failed = ups.find((u) => u.status === "failed");
+          if (failed) throw new Error(failed.error ?? "Couldn't read the file.");
+          break;
+        }
+        const r = left.find((u) => u.status === "reading");
+        setReading(r?.page_count ? `Reading page ${Math.min(r.pages_read + 1, r.page_count)} of ${r.page_count}` : "Reading the letter");
+      }
+      const found: LetterSummary[] = [];
+      for (const view of ["clean", "review"]) found.push(...(await api<Q>(`/firm/decisions?view=${view}&propertyId=${pid}`)).letters.filter((l) => ids.includes(l.uploadId)));
+      await refreshAll();
+      if (found.length) setLetterOpen(found.sort((a, b) => a.id - b.id)[0].id);
+      else setTrackError("No decision letter was found in that file.");
+    } catch (err) {
+      setTrackError(err instanceof Error && !(err as { status?: number }).status ? err.message : errorText(err));
+    } finally {
+      setReading("");
     }
   }
 
@@ -149,6 +190,13 @@ export function Property() {
                 <div className="eyebrow">Property tax appeal · {titleCase(p.asset_type)} · {p.county} County, {p.state}</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {can("properties.edit") && <button className="btn small secondary" onClick={() => setSheet("edit")}>Edit matter</button>}
+                  {can("appeals.edit") && (
+                    <>
+                      <button className="btn small secondary" disabled={Boolean(reading)} onClick={() => letterInput.current?.click()}>{reading || "Upload decision letter"}</button>
+                      <input ref={letterInput} type="file" multiple hidden accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" aria-label="Choose a decision letter to upload"
+                        onChange={(e) => { if (e.target.files?.length) void uploadLetters([...e.target.files]); e.target.value = ""; }} />
+                    </>
+                  )}
                   {can("appeals.edit") && <button className="btn small" onClick={() => setSheet("appeal")}>+ Appeal</button>}
                 </div>
               </div>
@@ -189,7 +237,7 @@ export function Property() {
               {trackError && <div className="error" role="alert">{trackError}</div>}
             </div>
             <dl className="facts">
-              <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}</dd></div>
+              <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}{appeals.some((a) => a.refund_status === "awaiting") && <> <span className="pill copper">Awaiting refund</span></>}</dd></div>
               <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>
               <div><dt>Analyst</dt><dd>{p.analyst_name ?? "Not assigned"}</dd></div>
               <div><dt>Township</dt><dd>{p.township ?? "Not set"}{p.tax_code ? ` · tax code ${p.tax_code}` : ""}{p.tax_code && !p.tax_code_confirmed ? " (unconfirmed)" : ""}</dd></div>
@@ -218,7 +266,10 @@ export function Property() {
         </div>
         <div className="pane">
           {tab === "appeals" && (
-            <AppealsTab appeals={appeals} canEdit={can("appeals.edit")} onCreate={() => setSheet("appeal")} onOpen={(a) => { setSelected(a.id); setTab("values"); }} />
+            <>
+              <AppealsTab appeals={appeals} canEdit={can("appeals.edit")} onCreate={() => setSheet("appeal")} onOpen={(a) => { setSelected(a.id); setTab("values"); }} />
+              <LettersList letters={data.decisionLetters} appeals={appeals} onOpen={setLetterOpen} />
+            </>
           )}
           {tab === "values" && (selectedAppeal ? (
             <>
@@ -237,6 +288,7 @@ export function Property() {
                 onSaved={() => void refreshAll()}
                 onDeleted={() => { setSelected(null); setTab("appeals"); void refreshAll(); }}
               />
+              <LettersList letters={data.decisionLetters.filter((l) => l.appealId === selectedAppeal.id)} appeals={appeals} onOpen={setLetterOpen} compact />
             </>
           ) : <p className="muted">No appeals yet. {can("appeals.edit") && <button className="lk" onClick={() => setSheet("appeal")}>Create the first appeal</button>}</p>)}
           {tab === "parcels" && <ParcelsTab propertyId={p.id} parcels={data.parcels} canEdit={can("properties.edit")} onChanged={() => void refreshAll()} />}
@@ -259,6 +311,7 @@ export function Property() {
         </div>
       )}
 
+      {letterOpen !== null && <LetterSheet letterId={letterOpen} onClose={() => setLetterOpen(null)} onChanged={() => void refreshAll()} />}
       {sheet === "edit" && (
         <PropertySheet existing={p} accounts={accounts.data?.accounts ?? []} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); void refreshAll(); }} />
       )}
@@ -339,7 +392,9 @@ function YearTrack({
                 ))}
               </ol>
             ) : (
-              i === curIdx + 1 && canEdit && <button className="btn small secondary" style={{ marginTop: 8 }} onClick={() => onStart(level)}>Start {LEVEL_LABELS[level]} appeal</button>
+              i === curIdx + 1 && canEdit && (level === "bor" && byLevel.get("assessor")?.status === "no_change"
+                ? <div style={{ marginTop: 8 }}><span className="meta" style={{ display: "block" }}>No change at the Assessor</span><button className="btn small copper" onClick={() => onStart(level)}>Start BOR appeal</button></div>
+                : <button className="btn small secondary" style={{ marginTop: 8 }} onClick={() => onStart(level)}>Start {LEVEL_LABELS[level]} appeal</button>)
             )}
           </div>
         );
@@ -380,7 +435,7 @@ function AppealsTab({ appeals, canEdit, onCreate, onOpen }: { appeals: AppealRow
               <tr key={a.id} className="clickable" onClick={() => onOpen(a)} title="Open values">
                 <td className="num">{a.assessment_year}<span className="mn" style={{ display: "block" }}>tax yr {a.tax_year}</span></td>
                 <td style={{ whiteSpace: "nowrap" }}>{LEVEL_LABELS[a.level]}<span className="mn" style={{ display: "block" }}>{SUBSTAGE_LABELS[a.substage]}</span></td>
-                <td><span className={`pill ${statusPill(a.status)}`}>{APPEAL_STATUS_LABELS[a.status]}</span>{a.exclude_from_totals && <span className="mn" style={{ display: "block" }}>Excluded</span>}{a.reference_update ? <span className="pill copper" style={{ marginTop: 3 }} title="A newer equalizer or rate is published. Open the values to apply it.">Newer rate</span> : null}</td>
+                <td><span className={`pill ${statusPill(a.status)}`}>{APPEAL_STATUS_LABELS[a.status]}</span>{a.exclude_from_totals && <span className="mn" style={{ display: "block" }}>Excluded</span>}{a.reference_update ? <span className="pill copper" style={{ marginTop: 3 }} title="A newer equalizer or rate is published. Open the values to apply it.">Newer rate</span> : null}{a.refund_status && <span className={`pill ${a.refund_status === "received" ? "ok" : "copper"}`} style={{ marginTop: 3 }}>{a.refund_status === "received" ? "Refund received" : "Awaiting refund"}</span>}</td>
                 <td className="num">{formatValue(fmvFromAv(a.orig_av, a.assessment_ratio))}</td>
                 <td className="num">{formatValue(fmvFromAv(a.target_av, a.assessment_ratio))}</td>
                 <td className="num">{formatValue(fmvFromAv(a.resolved_av, a.assessment_ratio))}</td>
@@ -407,6 +462,33 @@ function AppealsTab({ appeals, canEdit, onCreate, onOpen }: { appeals: AppealRow
         {appeals.some((a) => a.calc_override) && " Rows marked \u201centered by hand\u201d keep their tax figures as entered (for example, imported from the prior software) and aren't recalculated."}
       </p>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- decision letters
+function LettersList({ letters, appeals, onOpen, compact }: { letters: PropertyLetter[]; appeals: AppealRow[]; onOpen: (id: number) => void; compact?: boolean }) {
+  if (!letters.length) return compact ? null : <p className="meta letters-mini">No decision letters yet. Upload one with Upload decision letter above, or a stack on the Decisions page.</p>;
+  const appealName = (id: number | null) => { const a = appeals.find((x) => x.id === id); return a ? `${a.assessment_year} ${LEVEL_LABELS[a.level]}` : "Not matched"; };
+  return (
+    <div className="letters-mini">
+      <h3 className="subhead">Decision letters</h3>
+      <div className="tw">
+        <table className="compact">
+          <thead><tr><th>Letter</th><th>Appeal</th><th>Status</th><th>Filed</th><th /></tr></thead>
+          <tbody>
+            {letters.map((l) => (
+              <tr key={l.id} className="clickable" onClick={() => onOpen(l.id)}>
+                <td>{KIND_LABELS[l.kind]}<span className="mn" style={{ display: "block" }}>{l.letterDate ? formatDate(l.letterDate) : "No date"}</span></td>
+                <td>{appealName(l.appealId)}</td>
+                <td><span className={`pill ${l.status === "applied" ? "net" : l.status === "clean" ? "ok" : "warn"}`}>{l.status === "applied" ? `Applied ${l.appliedAt ? formatDate(l.appliedAt.slice(0, 10)) : ""}` : l.status === "clean" ? "Ready to apply" : "To review"}</span></td>
+                <td>{l.filed ? <span className="pill ok">In Dropbox</span> : l.status === "applied" ? <span className="warn-text">Not filed yet</span> : "—"}</td>
+                <td className="num"><button type="button" className="btn small ghost" onClick={(e) => { e.stopPropagation(); onOpen(l.id); }}>Open</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

@@ -83,12 +83,29 @@ authRouter.get("/me", async (req, res) => {
     }
   }
 
+  const prefs = (await query<{ show_value_cents: boolean }>(`SELECT show_value_cents FROM users WHERE id = $1`, [u.id])).rows[0];
   res.json({
     user: { id: u.id, name: u.name, email: u.email, role: u.role, isSuperAdmin: u.isSuperAdmin, isFirmAdmin: u.isFirmAdmin },
     firm,
     acting,
     permissions,
+    preferences: { showValueCents: prefs?.show_value_cents ?? false },
   });
+});
+
+/** The signed-in person's own display choices (today: cents on assessed and market values). */
+authRouter.put("/preferences", async (req, res) => {
+  if (!req.auth) {
+    res.status(401).json({ error: "Not signed in" });
+    return;
+  }
+  const parsed = z.object({ showValueCents: z.boolean() }).strict().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid preference." });
+    return;
+  }
+  await query(`UPDATE users SET show_value_cents = $2 WHERE id = $1`, [req.auth.user.id, parsed.data.showValueCents]);
+  res.json({ preferences: parsed.data });
 });
 
 const PasswordChange = z.object({ current: z.string().min(1).max(200), next: z.string().max(200) });

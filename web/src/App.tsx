@@ -14,6 +14,8 @@ import { Property } from "./pages/Property";
 import { Accounts } from "./pages/Accounts";
 import { Account } from "./pages/Account";
 import { Calendar } from "./pages/Calendar";
+import { Decisions } from "./pages/Decisions";
+import { setValueCents } from "./format";
 
 interface Session {
   me: Me;
@@ -37,7 +39,9 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      setMe(await api<Me>("/auth/me"));
+      const m = await api<Me>("/auth/me");
+      setValueCents(Boolean(m.preferences?.showValueCents));
+      setMe(m);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setMe(null);
       else throw err;
@@ -105,7 +109,7 @@ export function App() {
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/accounts/:id" element={<Account />} />
             <Route path="/calendar" element={<Calendar />} />
-            <Route path="/decisions" element={<Placeholder title="Decisions" step={6} detail="Upload a batch of decision letters, review the matches, and apply them." />} />
+            <Route path="/decisions" element={<Decisions />} />
             <Route path="/billing" element={<Placeholder title="Billing" step={7} detail="Invoices, statements, payments and refunds." />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<MyAccount />} />

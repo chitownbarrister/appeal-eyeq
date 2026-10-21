@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { useFirmUsers } from "../data";
-import { cleanNumber, formatDateTime, formatMoney, nn } from "../format";
+import { cleanNumber, formatDateTime, formatMoney, formatValue, nn } from "../format";
+import { AmountInput } from "./MoneyInput";
 import { PinValues, type LiveTotals } from "./PinValues";
 import { computeAppealTax } from "../../../shared/valuation";
 import { centsToString, equalizedValue, feeAmount, toCents } from "../../../shared/money";
@@ -205,14 +206,14 @@ export function ValuesEditor({
               <tr className="group"><td colSpan={4}>Tax</td></tr>
               <tr>
                 <td>Equalized value</td>
-                {(["original", "target", "resolved"] as const).map((k) => <td key={k} className="num">{!form.calcOverride && totals[k] && eq && /^\d{1,3}(\.\d{1,4})?$/.test(eq) ? formatMoney(equalizedValue(totals[k]!, eq)).replace("$", "") : "—"}</td>)}
+                {(["original", "target", "resolved"] as const).map((k) => <td key={k} className="num">{!form.calcOverride && totals[k] && eq && /^\d{1,3}(\.\d{1,4})?$/.test(eq) ? formatValue(equalizedValue(totals[k]!, eq)) : "—"}</td>)}
               </tr>
               <tr>
                 <td>Net tax</td>
                 {form.calcOverride
                   ? (["original", "target", "resolved"] as const).map((k) => (
                     <td key={k} className="num">
-                      <input className="in num" style={{ height: 30 }} aria-label={`${k} net tax`} value={manual[k]} disabled={!canEdit} inputMode="decimal" onChange={(e) => setManual({ ...manual, [k]: e.target.value })} />
+                      <AmountInput money className="in num" style={{ height: 30 }} aria-label={`${k} net tax`} value={manual[k]} disabled={!canEdit} onChange={(v) => setManual({ ...manual, [k]: v })} />
                     </td>
                   ))
                   : [computed.originalTax, computed.targetTax, computed.resolvedTax].map((v, i) => <td key={i} className="num">{v ? formatMoney(v) : "—"}</td>)}

@@ -37,4 +37,5 @@ export interface Me {
   firm: { id: number; name: string; isSample: boolean } | null;
   acting: { firmId: number; firmName: string; grantExpiresAt: string } | null;
   permissions: string[];
+  preferences?: { showValueCents: boolean };
 }

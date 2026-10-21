@@ -8,7 +8,20 @@ const MIN = 10;
 
 /** The signed-in person's own account: who they are, and changing their password. */
 export function MyAccount() {
-  const { me } = useSession();
+  const { me, refresh } = useSession();
+  const [cents, setCents] = useState(Boolean(me.preferences?.showValueCents));
+  const [centsError, setCentsError] = useState("");
+  async function toggleCents(on: boolean) {
+    setCents(on);
+    setCentsError("");
+    try {
+      await api("/auth/preferences", { method: "PUT", body: { showValueCents: on } });
+      await refresh();
+    } catch (err) {
+      setCents(!on);
+      setCentsError(errorText(err));
+    }
+  }
   const [form, setForm] = useState({ current: "", next: "", confirm: "" });
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
@@ -54,6 +67,15 @@ export function MyAccount() {
               ? "The super admin's name and email are set in the server's settings."
               : <>A firm admin changes names, emails and roles in <Link to="/settings">Firm settings</Link>, Users.</>}
           </p>
+        </section>
+
+        <section className="card pad" aria-labelledby="acct-display">
+          <h3 id="acct-display">Display</h3>
+          <label className="check">
+            <input type="checkbox" checked={cents} onChange={(e) => void toggleCents(e.target.checked)} /> Show cents on assessed and market values
+          </label>
+          <p className="meta">Values show in whole dollars, the way notices print them: {cents ? "$61,875.00 instead of $61,875" : "$61,875, not $61,875.00"}. Taxes, savings and fees always show cents. This is your own setting.</p>
+          {centsError && <div className="error" role="alert">{centsError}</div>}
         </section>
 
         <form className="card pad" onSubmit={submit} aria-labelledby="acct-pw">
