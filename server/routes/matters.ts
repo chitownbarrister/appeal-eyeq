@@ -427,7 +427,13 @@ mattersRouter.delete("/properties/:id", requirePermission("properties.delete"), 
     if ((await c.query(`SELECT 1 FROM invoices WHERE firm_id = $1 AND property_id = $2 AND status <> 'draft'`, [req.ctx!.firmId, pid])).rowCount) {
       throw Object.assign(new Error("invoices"), { status: 409, publicMessage: "This property has invoices, which stay in the billing record. Mark it Closed or Sold instead of deleting it." });
     }
+    if ((await c.query(`SELECT 1 FROM trust_entries WHERE firm_id = $1 AND appeal_id IN (SELECT id FROM appeals WHERE firm_id = $1 AND property_id = $2)
+                        UNION ALL SELECT 1 FROM trust_settlements WHERE firm_id = $1 AND property_id = $2 AND status <> 'void'
+                        UNION ALL SELECT 1 FROM expenses WHERE firm_id = $1 AND property_id = $2`, [req.ctx!.firmId, pid])).rowCount) {
+      throw Object.assign(new Error("trust"), { status: 409, publicMessage: "This property has expenses or trust records, which stay in the record. Mark it Closed or Sold instead of deleting it." });
+    }
     await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND property_id = $2 AND status = 'draft'`, [req.ctx!.firmId, pid]);
+    await c.query(`DELETE FROM trust_settlements WHERE firm_id = $1 AND property_id = $2 AND status = 'void'`, [req.ctx!.firmId, pid]);
     // Decision letters matched to it go back to review instead of blocking the delete.
     await detachLetters(c, req.ctx!.firmId!, { propertyId: pid });
     return c.query(`DELETE FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]);
@@ -795,7 +801,19 @@ mattersRouter.patch("/appeals/:id", requirePermission("appeals.edit"), async (re
     }
     // A PTAB decision carries forward to later appeals in the same reassessment cycle.
     if (r.rows[0].level === "ptab") await applyRollover(c, req.ctx!.firmId!, aid);
-    return r.rows[0];
+    // A PTAB or Circuit Court reduction entered by hand waits for its refund check, the same as one
+    // applied from a decision letter (the expected refund is the tax saved, an estimate). Taking the
+    // reduction away again clears a refund that hasn't arrived.
+    const row = r.rows[0];
+    if (row.level === "ptab" || row.level === "circuit") {
+      if (row.status === "reduced" && !row.refund_status) {
+        return (await c.query(`UPDATE appeals SET refund_status = 'awaiting', refund_expected = $3 WHERE firm_id = $1 AND id = $2 RETURNING *`, [req.ctx!.firmId, aid, row.savings])).rows[0];
+      }
+      if (row.status !== "reduced" && row.refund_status === "awaiting") {
+        return (await c.query(`UPDATE appeals SET refund_status = NULL, refund_expected = NULL WHERE firm_id = $1 AND id = $2 RETURNING *`, [req.ctx!.firmId, aid])).rows[0];
+      }
+    }
+    return row;
   });
   if (!result) { res.status(404).json({ error: "Appeal not found." }); return; }
   res.json({ appeal: result });
@@ -844,7 +862,12 @@ mattersRouter.delete("/appeals/:id", requirePermission("appeals.edit"), async (r
     if ((await c.query(`SELECT 1 FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status IN ('sent', 'paid')`, [req.ctx!.firmId, aid])).rowCount) {
       throw Object.assign(new Error("invoices"), { status: 409, publicMessage: "This appeal has an invoice that was sent. Void it in Billing first; the invoice itself stays in the record." });
     }
+    if ((await c.query(`SELECT 1 FROM trust_entries WHERE firm_id = $1 AND appeal_id = $2 UNION ALL SELECT 1 FROM trust_settlements WHERE firm_id = $1 AND appeal_id = $2 AND status <> 'void'`, [req.ctx!.firmId, aid])).rowCount) {
+      throw Object.assign(new Error("trust"), { status: 409, publicMessage: "This appeal has a refund recorded in trust. Take the refund back on Decisions, Awaiting refund first." });
+    }
     await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status = 'draft'`, [req.ctx!.firmId, aid]);
+    await c.query(`DELETE FROM trust_settlements WHERE firm_id = $1 AND appeal_id = $2 AND status = 'void'`, [req.ctx!.firmId, aid]);
+    await c.query(`UPDATE expenses SET appeal_id = NULL WHERE firm_id = $1 AND appeal_id = $2`, [req.ctx!.firmId, aid]);
     await c.query(`UPDATE invoices SET appeal_id = NULL WHERE firm_id = $1 AND appeal_id = $2 AND status = 'void'`, [req.ctx!.firmId, aid]);
     return c.query(`DELETE FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]);
   });

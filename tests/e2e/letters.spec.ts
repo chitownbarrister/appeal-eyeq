@@ -120,7 +120,7 @@ test("a PTAB reduction waits for its refund, which is recorded when the check co
   await rs.getByLabel("Check received").fill("2026-10-16"); // the test server's "today" is pinned to Oct 19
   await rs.getByLabel("Amount, refund and interest").fill("4321.09");
   await rs.getByRole("button", { name: "Record refund" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Refund recorded." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Refund recorded and deposited to trust." })).toBeVisible();
   await expect(page.locator("h3", { hasText: "Received" })).toBeVisible();
   await expect(page.locator("tr", { hasText: "1450 Waukegan Rd." })).toContainText("$4,321.09");
 });

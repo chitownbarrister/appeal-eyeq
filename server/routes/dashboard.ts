@@ -15,6 +15,7 @@ import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js"
 import { centsToString, toCents } from "../../shared/money.js";
 import { isReassessed, reassessmentLabel } from "../../shared/reassessment.js";
 import { DECISION_DAYS_AFTER_WINDOW, FORECAST_MONTHS } from "../../shared/forecast.js";
+import { readyToBill } from "../billing/core.js";
 
 export const dashboardRouter = Router();
 
@@ -90,7 +91,8 @@ dashboardRouter.get("/dashboard", async (req, res) => {
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
         WHERE a.firm_id = $1 AND p.status = 'active' AND NOT a.exclude_from_totals
           AND a.substage NOT IN ('invoice_sent', 'pushed_next_level', 'closed', 'fairly_assessed')
-          AND a.status IN ('open', 'waiting_decision', 'reduced')`,
+          AND a.status IN ('open', 'waiting_decision', 'reduced') AND a.billing_skipped_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.firm_id = a.firm_id AND i.appeal_id = a.id AND i.status <> 'void')`,
       [firmId],
     )).rows;
     const feeDefaults = (await c.query<{ level: Level; percent: string; basis: FeeBasis }>(`SELECT level, percent, basis FROM fee_defaults WHERE firm_id = $1`, [firmId])).rows;
@@ -130,7 +132,9 @@ dashboardRouter.get("/dashboard", async (req, res) => {
           AND substage NOT IN ('invoice_sent', 'pushed_next_level', 'closed')`,
       [firmId],
     )).rows[0];
-    return { cur, activeProps, windows, decided, forecastRows, feeDefaults, users, filed, hearings, history, inPlay };
+    // "Fees ready to bill" is Billing's own figure, so the two pages always agree.
+    const billReady = await readyToBill(c, firmId);
+    return { cur, activeProps, windows, decided, forecastRows, feeDefaults, users, filed, hearings, history, inPlay, billReady };
   });
 
   const inTownship = (p: { county_id: number; township_id: number | null }, w: { county_id: number; township_id: number | null }) =>
@@ -205,7 +209,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
   // ---- fee forecast (Assessor and BOR; PTAB and Court fees come from the refund check)
   const thisMonth = monthOf(today);
   const months = Array.from({ length: FORECAST_MONTHS }, (_, i) => addMonths(thisMonth, i));
-  const items: { property_id: number; short: string; account: string; level: Level; kind: "decided" | "expected"; month: string; fee: string; likely: string | null; basis: string }[] = [];
+  const items: { appeal_id: number; property_id: number; short: string; account: string; level: Level; kind: "decided" | "expected"; month: string; fee: string; likely: string | null; basis: string }[] = [];
   let refundLevelOpen = 0;
   let noFeeSkipped = 0;
   for (const a of d.forecastRows) {
@@ -222,7 +226,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     if (fee.noFee) { noFeeSkipped++; continue; }
     const amount = firstYearFee(base, fee)!;
     if (decidedIn) {
-      items.push({ property_id: a.property_id, short: short(a), account: a.account_name, level: a.level, kind: "decided", month: thisMonth, fee: amount, likely: amount, basis: a.status === "reduced" ? "Decided, savings recorded" : "Decision in, at estimated savings" });
+      items.push({ appeal_id: a.id, property_id: a.property_id, short: short(a), account: a.account_name, level: a.level, kind: "decided", month: thisMonth, fee: amount, likely: amount, basis: a.status === "reduced" ? "Decided, savings recorded" : "Decision in, at estimated savings" });
       continue;
     }
     const w = d.windows.find((x) => inTownship(a, x) && x.level === a.level && x.assessment_year === a.assessment_year)
@@ -232,7 +236,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     if (expected < today) expected = today;
     const rate = levelWinRate(a.level);
     items.push({
-      property_id: a.property_id, short: short(a), account: a.account_name, level: a.level, kind: "expected", month: monthOf(expected), fee: amount,
+      appeal_id: a.id, property_id: a.property_id, short: short(a), account: a.account_name, level: a.level, kind: "expected", month: monthOf(expected), fee: amount,
       likely: rate === null ? null : centsToString((toCents(amount) * BigInt(Math.round(rate * 10000)) + 5000n) / 10000n),
       basis: `Expected decision ${monthOf(expected)}, at target`,
     });
@@ -301,6 +305,9 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     atRisk,
   };
 
+  const billable = new Set(d.billReady.map((r) => r.appealId));
+  const pending = items.filter((i) => i.kind === "decided" && !billable.has(i.appeal_id));
+
   // ---- counts
   const byAssetType = ["residential", "commercial", "industrial"].map((t) => ({ type: t, count: d.activeProps.filter((p) => p.asset_type === t).length }));
   const byLevel = LEVELS.map((l) => ({ level: l, count: d.cur.filter((p) => p.level === l).length }));
@@ -312,7 +319,10 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     kpis: {
       unfiled: unfiledIds.size,
       savingsInPlay: d.inPlay.v,
-      readyToBill: forecast.readyToBill,
+      readyToBill: sum(d.billReady.map((r) => r.fee)),
+      // Decisions in but not billable yet (outcome or tax figures still to enter), at estimated savings.
+      decisionsPending: sum(pending.map((i) => i.fee)),
+      decisionsPendingCount: pending.length,
       forecastSixMonths: forecast.nextSixMonths,
       stalled: stalled.length,
     },
@@ -321,7 +331,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
       unfiled: [...unfiledIds],
       inPlay: d.inPlay.ids ?? [],
       achieved: d.inPlay.achieved_ids ?? [],
-      readyToBill: forecast.readyToBillIds,
+      readyToBill: [...new Set(d.billReady.map((r) => r.propertyId))],
       forecastSixMonths: forecast.nextSixMonthsIds,
     },
     nextClose,

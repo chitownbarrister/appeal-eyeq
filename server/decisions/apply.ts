@@ -201,6 +201,9 @@ export async function undoLetter(c: pg.PoolClient, firmId: number, letterId: num
   const inv = (await c.query<{ status: string }>(`SELECT status FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status <> 'void'`, [firmId, l.appeal_id])).rows[0];
   if (inv && inv.status !== "draft") throw httpError(409, `This appeal's invoice is ${inv.status}. Void it in Billing before undoing the letter.`);
   await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status = 'draft'`, [firmId, l.appeal_id]);
+  if ((await c.query(`SELECT 1 FROM trust_entries WHERE firm_id = $1 AND appeal_id = $2`, [firmId, l.appeal_id])).rowCount) {
+    throw httpError(409, "This appeal's refund is recorded in trust. Take the refund back on Decisions, Awaiting refund before undoing the letter.");
+  }
   const snap = l.before_apply;
   const cols = Object.keys(snap.appeal).filter((k) => (APPEAL_SNAPSHOT_COLS as readonly string[]).includes(k));
   await c.query(

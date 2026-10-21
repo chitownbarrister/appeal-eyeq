@@ -9,6 +9,7 @@ import { useSession } from "../App";
 import { formatDate, formatDateTime, formatMoney, splitMatterTitle, todayIso } from "../format";
 import { Sheet } from "./Sheet";
 import { MoneyInput } from "./MoneyInput";
+import { ExpenseList, ExpenseSheet, SettlementList, SettlementSheet, SettlementStatus, TrustLedger, type ExpenseRow, type SettlementRow } from "./TrustSheets";
 
 export interface InvoiceRow {
   id: number; number: string | null; status: "draft" | "sent" | "paid" | "void"; issuedOn: string | null; dueOn: string | null; total: string;
@@ -422,52 +423,85 @@ export function CreateStatementSheet({ accountId, client, emailOn, onClose, onCr
   );
 }
 
-/** A client's billing on the client page: every invoice and statement, and starting a statement. */
+/** A client's billing on the client page: invoices and statements, trust and expenses, and starting a statement. */
 export function ClientBilling({ accountId, client }: { accountId: number; client: string }) {
   const { can } = useSession();
-  const [data, setData] = useState<{ invoices: InvoiceRow[]; statements: StatementRow[]; all: InvoiceRow[] } | null>(null);
+  const [data, setData] = useState<{ invoices: InvoiceRow[]; statements: StatementRow[]; all: InvoiceRow[]; expenses: ExpenseRow[]; trustBalance: string } | null>(null);
+  const [settlements, setSettlements] = useState<SettlementRow[]>([]);
   const [emailOn, setEmailOn] = useState(false);
-  const [open, setOpen] = useState<{ kind: "invoice" | "statement"; id: number } | null>(null);
+  const [open, setOpen] = useState<{ kind: "invoice" | "statement" | "settlement"; id: number } | null>(null);
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState("");
+  const [ledgerKey, setLedgerKey] = useState(0);
   const load = useCallback(async () => {
     setData(await api(`/firm/billing/accounts/${accountId}/open`));
+    setSettlements((await api<{ settlements: SettlementRow[] }>(`/firm/trust/accounts/${accountId}`)).settlements);
+    setLedgerKey((k) => k + 1);
   }, [accountId]);
   useEffect(() => { void load(); void api<{ emailAvailable: boolean }>("/firm/billing/settings").then((s) => setEmailOn(s.emailAvailable)).catch(() => undefined); }, [load]);
   if (!data) return null;
   return (
     <>
       <div className="tbar">
-        <span className="meta">{data.invoices.length} unpaid invoice{data.invoices.length === 1 ? "" : "s"} · {formatMoney(data.invoices.reduce((a, i) => a + Number(i.total), 0).toFixed(2))} outstanding</span>
+        <span className="meta">
+          {data.invoices.length} unpaid invoice{data.invoices.length === 1 ? "" : "s"} · {formatMoney(data.invoices.reduce((a, i) => a + Number(i.total), 0).toFixed(2))} outstanding
+          {Number(data.trustBalance) !== 0 && <> · {formatMoney(data.trustBalance)} in trust</>}
+        </span>
         <span className="sp" />
         {can("invoices.send") && data.invoices.length >= 2 && <button type="button" className="btn small copper" onClick={() => setCreating(true)}>Create statement</button>}
       </div>
       {notice && <div className="ok" role="status">{notice}</div>}
       <BillingList invoices={data.all} statements={data.statements} onOpen={setOpen} showClient={false} />
+      {settlements.length > 0 && (
+        <>
+          <h3 className="subhead">Refunds in trust</h3>
+          <SettlementList rows={settlements} onOpen={(id) => setOpen({ kind: "settlement", id })} showClient={false} />
+        </>
+      )}
+      <TrustLedger key={ledgerKey} accountId={accountId} />
+      {data.expenses.length > 0 && (
+        <>
+          <h3 className="subhead">Expenses the firm fronted</h3>
+          <ExpenseList rows={data.expenses} showProperty />
+        </>
+      )}
       {open?.kind === "invoice" && <InvoiceSheet invoiceId={open.id} emailOn={emailOn} onClose={() => setOpen(null)} onChanged={() => void load()} />}
       {open?.kind === "statement" && <StatementSheet statementId={open.id} onClose={() => setOpen(null)} onChanged={() => void load()} onOpenInvoice={(id) => setOpen({ kind: "invoice", id })} />}
+      {open?.kind === "settlement" && <SettlementSheet settlementId={open.id} onClose={() => setOpen(null)} onChanged={() => void load()} />}
       {creating && <CreateStatementSheet accountId={accountId} client={client} emailOn={emailOn} onClose={() => setCreating(false)} onCreated={(id, msg) => { setCreating(false); setNotice(msg); void load(); setOpen({ kind: "statement", id }); }} />}
     </>
   );
 }
 
-/** One property's billing on the property page: anything ready to bill, then its invoices. */
+interface NeedsRow { appealId: number; year: number; level: string; propertyId: number; client: string; title: string; missing: string[] }
+
+/** One property's billing on the property page: anything ready to bill or missing figures, invoices, refunds in trust and expenses. */
 export function PropertyBilling({ propertyId }: { propertyId: number }) {
   const { can } = useSession();
-  const [data, setData] = useState<{ invoices: InvoiceRow[]; ready: { appealId: number; year: number; level: string; fee: string; savings: string; description: string }[] } | null>(null);
+  const [data, setData] = useState<{
+    invoices: InvoiceRow[]; ready: { appealId: number; year: number; level: string; fee: string; savings: string; description: string }[]; needs: NeedsRow[];
+    expenses: ExpenseRow[]; settlements: { id: number; status: SettlementRow["status"]; refund: string; fee: string; expenses: string; toClient: string; receivedOn: string; paidOn: string | null; appeal: string }[];
+    appeals: { id: number; label: string }[]; receipts: { id: number; name: string }[];
+  } | null>(null);
   const [emailOn, setEmailOn] = useState(false);
-  const [open, setOpen] = useState<number | null>(null);
+  const [open, setOpen] = useState<{ kind: "invoice" | "settlement"; id: number } | null>(null);
+  const [expense, setExpense] = useState<ExpenseRow | "new" | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const load = useCallback(async () => { setData(await api(`/firm/billing/properties/${propertyId}`)); }, [propertyId]);
   useEffect(() => { void load(); void api<{ emailAvailable: boolean }>("/firm/billing/settings").then((s) => setEmailOn(s.emailAvailable)).catch(() => undefined); }, [load]);
-  async function draft(appealId: number) {
-    setError("");
-    try { const r = await api<{ id: number }>(`/firm/billing/appeals/${appealId}/invoice`, { method: "POST", body: {} }); await load(); setOpen(r.id); } catch (e) { setError(errorText(e)); }
+  async function act(fn: () => Promise<string | void>) {
+    setError(""); setNotice("");
+    try { const m = await fn(); if (m) setNotice(m); } catch (e) { setError(errorText(e)); }
   }
+  const draft = (appealId: number) => act(async () => { const r = await api<{ id: number }>(`/firm/billing/appeals/${appealId}/invoice`, { method: "POST", body: {} }); await load(); setOpen({ kind: "invoice", id: r.id }); });
+  const expenseInvoice = () => act(async () => { const r = await api<{ id: number }>(`/firm/billing/properties/${propertyId}/expense-invoice`, { method: "POST", body: {} }); await load(); setOpen({ kind: "invoice", id: r.id }); });
   if (!data) return null;
+  const openForInvoice = data.expenses.filter((e) => e.state === "open" && e.recovery === "invoice");
   return (
     <>
       {error && <div className="error" role="alert">{error}</div>}
+      {notice && <div className="ok" role="status">{notice}</div>}
       {data.ready.map((r) => (
         <div key={r.appealId} className="notice-box copper">
           <span>Ready to bill: {r.description}. Fee {formatMoney(r.fee)}.</span>
@@ -475,8 +509,49 @@ export function PropertyBilling({ propertyId }: { propertyId: number }) {
           {can("invoices.send") && <button type="button" className="btn small copper" onClick={() => void draft(r.appealId)}>Draft invoice</button>}
         </div>
       ))}
-      <BillingList invoices={data.invoices} statements={[]} onOpen={(x) => setOpen(x.id)} showClient={false} showProperty={false} />
-      {open !== null && <InvoiceSheet invoiceId={open} emailOn={emailOn} onClose={() => setOpen(null)} onChanged={() => void load()} />}
+      {data.needs.map((n) => (
+        <div key={n.appealId} className="notice-box">
+          <span>Needs tax figures: the {n.year} {n.level === "bor" ? "Board of Review" : "Assessor"} reduction can't be billed until its {n.missing.join(", ")} {n.missing.length === 1 ? "is" : "are"} entered.</span>
+          <span className="sp" />
+          <Link className="btn small secondary" to={`/properties/${propertyId}?appeal=${n.appealId}`}>Open its values</Link>
+        </div>
+      ))}
+      <BillingList invoices={data.invoices} statements={[]} onOpen={(x) => setOpen({ kind: "invoice", id: x.id })} showClient={false} showProperty={false} />
+
+      {data.settlements.length > 0 && (
+        <>
+          <h3 className="subhead">Refunds in trust</h3>
+          <div className="tw">
+            <table className="compact">
+              <thead><tr><th>Appeal</th><th>Refund in</th><th className="num">Refund</th><th className="num">Fee</th><th className="num">Expenses</th><th className="num">To client</th><th>Status</th></tr></thead>
+              <tbody>
+                {data.settlements.map((s) => (
+                  <tr key={s.id} className="clickable" onClick={() => setOpen({ kind: "settlement", id: s.id })}>
+                    <td>{s.appeal}</td><td>{formatDate(s.receivedOn)}</td><td className="num">{formatMoney(s.refund)}</td><td className="num">{formatMoney(s.fee)}</td>
+                    <td className="num">{formatMoney(s.expenses)}</td><td className="num"><b>{formatMoney(s.toClient)}</b></td><td><SettlementStatus s={s} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      <div className="tbar" style={{ marginTop: 18 }}>
+        <h3 className="subhead" style={{ margin: 0 }}>Expenses the firm fronted</h3>
+        <span className="sp" />
+        {can("invoices.send") && openForInvoice.length > 0 && <button type="button" className="btn small secondary" onClick={() => void expenseInvoice()}>Invoice {openForInvoice.length === 1 ? "the open expense" : `${openForInvoice.length} open expenses`}</button>}
+        {can("invoices.send") && <button type="button" className="btn small" onClick={() => setExpense("new")}>+ Expense</button>}
+      </div>
+      <ExpenseList rows={data.expenses} onOpen={can("invoices.send") ? (e) => setExpense(e) : undefined} />
+      {data.expenses.some((e) => e.state === "open") && <p className="meta">Open expenses marked "From the refund" come out of the next refund's settlement; "On an invoice" ones are added to the next invoice drafted here. Click an open one to change it.</p>}
+
+      {open?.kind === "invoice" && <InvoiceSheet invoiceId={open.id} emailOn={emailOn} onClose={() => setOpen(null)} onChanged={() => void load()} />}
+      {open?.kind === "settlement" && <SettlementSheet settlementId={open.id} onClose={() => setOpen(null)} onChanged={() => void load()} />}
+      {expense && (
+        <ExpenseSheet propertyId={propertyId} existing={expense === "new" ? null : expense} appeals={data.appeals} receipts={data.receipts}
+          onClose={() => setExpense(null)} onSaved={() => { setExpense(null); setNotice("Expense saved."); void load(); }} />
+      )}
     </>
   );
 }

@@ -21,6 +21,8 @@ import { LETTER_KINDS, OUTCOMES, type LetterFields } from "../decisions/parse.js
 import { applyLetter, loadLetter, nextStepFor, refreshMatch, undoLetter, type ApplyResult, type LetterRow } from "../decisions/apply.js";
 import { fileLetter, loadLetterFile, purgeIfFinished } from "../decisions/file.js";
 import { startNextLevel } from "./matters.js";
+import { refundReceived, refundUndone } from "../billing/trust.js";
+import { toCents } from "../../shared/money.js";
 import { ensureAppealFolder } from "./property-files.js";
 
 export const decisionsRouter = Router();
@@ -452,18 +454,24 @@ decisionsRouter.post("/decisions/refunds/:id", requirePermission("appeals.edit")
     const a = (await c.query(`SELECT refund_status FROM appeals WHERE firm_id = $1 AND id = $2 FOR UPDATE`, [firmId, id])).rows[0];
     if (!a) throw httpError(404, "Appeal not found.");
     if (!a.refund_status) throw httpError(409, "This appeal isn't waiting for a refund.");
+    if (toCents(parsed.data.amount) <= 0n) throw httpError(400, "Give the amount received, refund and interest together.");
+    // Recording it again (a corrected amount) replaces the deposit and the draft settlement.
+    if (a.refund_status === "received") await refundUndone(c, firmId, id);
     await c.query(
       `UPDATE appeals SET refund_status = 'received', refund_received = $3, refund_received_on = $4 WHERE firm_id = $1 AND id = $2`,
       [firmId, id, parsed.data.amount, parsed.data.receivedOn],
     );
-  });
-  res.json({ ok: true });
+    // Into trust: the deposit, and the settlement drafted (fee, fronted expenses, the client's share).
+    return refundReceived(c, firmId, req.auth!.user.id, id);
+  }).then((settlementId) => res.json({ ok: true, settlementId }));
+  return;
 });
 
 decisionsRouter.delete("/decisions/refunds/:id", requirePermission("appeals.edit"), async (req, res) => {
   const id = idParam(req);
   if (!id) throw httpError(400, "Invalid appeal.");
   await withContext(req.ctx!, async (c) => {
+    await refundUndone(c, req.ctx!.firmId!, id);
     const r = await c.query(
       `UPDATE appeals SET refund_status = 'awaiting', refund_received = NULL, refund_received_on = NULL WHERE firm_id = $1 AND id = $2 AND refund_status = 'received'`,
       [req.ctx!.firmId, id],

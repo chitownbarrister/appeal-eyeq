@@ -241,6 +241,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "fees.edit": "Edit fee terms",
   "invoices.send": "Send invoices and statements",
   "invoices.void": "Void invoices",
+  "trust.approve": "Approve payouts from trust",
   "decisions.apply": "Apply decisions",
   "files.delete": "Delete files and folders",
   "files.delete_protected": "Delete protected files and template folders",

@@ -21,7 +21,7 @@ test("the dashboard: KPIs, window watch, pipeline, fee forecast and win rates", 
   await expect(kpis).toContainText("Unfiled, window open5");
   await expect(kpis).toContainText("Next close: Elk Grove, Oct 27, 2026");
   await expect(kpis).toContainText("$274,084.32");
-  await expect(kpis).toContainText("Fees ready to bill$15,060.00");
+  await expect(kpis).toContainText("Fees ready to bill$0.00Plus about $15,060.00 once 2 decisions are entered");
   await expect(kpis).toContainText("$94,452.00");
   await expect(kpis).toContainText("$72,801.81 at your win rates");
 
@@ -72,10 +72,10 @@ test("numbers on the dashboard open the matching properties, and Back returns", 
   await expect(page.getByRole("combobox", { name: "Substage" })).toHaveValue("under_review");
   await page.goBack();
 
+  // Fees ready to bill is Billing's figure (Delivery 9b), so the tile opens Billing.
   await page.getByRole("link", { name: /Fees ready to bill/ }).click();
-  await expect(page.getByText("2 of 15")).toBeVisible();
-  await page.getByRole("button", { name: "Show all properties" }).click();
-  await expect(page.getByText("15 of 15")).toBeVisible();
+  await expect(page).toHaveURL(/\/billing$/);
+  await expect(page.getByRole("heading", { name: "Invoices and payments" })).toBeVisible();
   await page.goto("/dashboard");
 
   const forecast = page.locator("section", { has: page.getByRole("heading", { name: "When fees land" }) });

@@ -18,6 +18,7 @@ import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js"
 import { centsToString, formatMoney, toCents } from "../../shared/money.js";
 import { todayIso } from "../today.js";
 import { decryptSecret, encryptSecret, hasEncryptionKey } from "../secrets.js";
+import { addExpenseLines } from "./trust.js";
 
 type C = pg.PoolClient;
 const err = (status: number, publicMessage: string) => Object.assign(new Error(publicMessage), { status, publicMessage });
@@ -69,7 +70,8 @@ export interface FeeLine { amount: string; description: string; basis: Record<st
  * The fee for a decided Assessor or BOR appeal, or why there isn't one. The client's fee cap
  * applies, and a flat-fee client is billed the flat fee.
  */
-export async function feeForAppeal(c: C, firmId: number, appealId: number): Promise<{ fee: FeeLine | null; reason: string | null }> {
+/** An appeal with its property's and client's fee terms, and the fee that applies to it. */
+export async function feeContext(c: C, firmId: number, appealId: number) {
   const a = (await c.query(
     `SELECT a.*, p.no_fee AS p_no_fee, p.fee_percent_first_year AS p_fy, p.fee_percent_refund AS p_rf,
             ac.no_fee AS a_no_fee, ac.fee_percent_first_year AS a_fy, ac.fee_percent_refund AS a_rf, ac.fee_type, ac.fee_cap, ac.flat_fee
@@ -78,9 +80,7 @@ export async function feeForAppeal(c: C, firmId: number, appealId: number): Prom
       WHERE a.firm_id = $1 AND a.id = $2`,
     [firmId, appealId],
   )).rows[0];
-  if (!a) return { fee: null, reason: "Appeal not found." };
-  if (a.level === "ptab" || a.level === "circuit") return { fee: null, reason: "PTAB and Circuit Court fees come out of the refund check." };
-  if (a.status !== "reduced") return { fee: null, reason: "Only a reduction is billed." };
+  if (!a) return null;
   const defaults = (await c.query<{ level: Level; percent: string; basis: FeeBasis }>(`SELECT level, percent, basis FROM fee_defaults WHERE firm_id = $1`, [firmId])).rows;
   const eff = effectiveFee(a.level, {
     firmDefaults: defaults,
@@ -88,6 +88,16 @@ export async function feeForAppeal(c: C, firmId: number, appealId: number): Prom
     property: { fee_percent_first_year: a.p_fy, fee_percent_refund: a.p_rf, no_fee: a.p_no_fee },
     appeal: { fee_percent: a.fee_percent },
   });
+  return { a, eff };
+}
+
+export async function feeForAppeal(c: C, firmId: number, appealId: number): Promise<{ fee: FeeLine | null; reason: string | null }> {
+  const ctx = await feeContext(c, firmId, appealId);
+  if (!ctx) return { fee: null, reason: "Appeal not found." };
+  const { a, eff } = ctx;
+  if (a.level === "ptab" || a.level === "circuit") return { fee: null, reason: "PTAB and Circuit Court fees come out of the refund check." };
+  if (a.status !== "reduced") return { fee: null, reason: "Only a reduction is billed." };
+  if (a.billing_skipped_at) return { fee: null, reason: `Marked not billed here${a.billing_skip_reason ? `: ${a.billing_skip_reason}` : ""}.` };
   if (eff.noFee) return { fee: null, reason: "No fee for this property or client." };
   const what = `${LEVEL_LABELS[a.level as Level]} appeal, ${a.assessment_year} assessment year`;
   if (a.fee_type === "flat" && a.flat_fee !== null) {
@@ -131,14 +141,65 @@ export async function draftInvoice(c: C, firmId: number, userId: number | null, 
   )).rows[0];
   await c.query(`INSERT INTO invoice_lines (firm_id, invoice_id, kind, description, amount, position) VALUES ($1, $2, 'fee', $3, $4, 0)`, [firmId, inv.id, fee.description, fee.amount]);
   await refreshTotal(c, firmId, inv.id);
+  // Expenses fronted on this property, marked to be recovered on an invoice, ride along.
+  await addExpenseLines(c, firmId, inv.id);
   return { id: inv.id, reason: null };
+}
+
+/** An invoice for a property's open "recover on an invoice" expenses alone (no fee). */
+export async function draftExpenseInvoice(c: C, firmId: number, userId: number | null, propertyId: number): Promise<number> {
+  const p = (await c.query<{ account_id: number }>(`SELECT account_id FROM properties WHERE firm_id = $1 AND id = $2`, [firmId, propertyId])).rows[0];
+  if (!p) throw err(404, "Property not found.");
+  const inv = (await c.query<{ id: number }>(
+    `INSERT INTO invoices (firm_id, account_id, property_id, status, created_by) VALUES ($1, $2, $3, 'draft', $4) RETURNING id`, [firmId, p.account_id, propertyId, userId],
+  )).rows[0];
+  const n = await addExpenseLines(c, firmId, inv.id);
+  if (!n) {
+    await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND id = $2`, [firmId, inv.id]);
+    throw err(409, "This property has no open expenses to invoice.");
+  }
+  return inv.id;
+}
+
+/**
+ * Decided Assessor and BOR reductions that would be billed but have no tax savings figured,
+ * with what's missing, so a real reduction never drops out of sight.
+ */
+export async function needsTaxFigures(c: C, firmId: number) {
+  const rows = (await c.query(
+    `SELECT a.id, a.assessment_year, a.level, a.decision_on, a.orig_av, a.resolved_av, a.equalizer, a.tax_rate_percent, a.property_id,
+            p.tax_code, p.address1, p.name, p.city, t.name AS township, ac.id AS account_id, ac.name AS client, ac.fee_type, ac.flat_fee,
+            (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin
+       FROM appeals a JOIN properties p ON p.firm_id = a.firm_id AND p.id = a.property_id
+       JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id LEFT JOIN townships t ON t.id = p.township_id
+      WHERE a.firm_id = $1 AND a.level IN ('assessor', 'bor') AND a.status = 'reduced' AND (a.savings IS NULL OR a.savings <= 0)
+        AND a.billing_skipped_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.firm_id = a.firm_id AND i.appeal_id = a.id AND i.status <> 'void')
+      ORDER BY a.assessment_year DESC, a.decision_on DESC NULLS LAST, a.id`,
+    [firmId],
+  )).rows;
+  const out = [];
+  for (const r of rows) {
+    if (r.fee_type === "flat" && r.flat_fee !== null) continue; // a flat fee doesn't need the tax math, so it's already in Ready to bill
+    const ctx = await feeContext(c, firmId, r.id);
+    if (!ctx || ctx.eff.noFee) continue;
+    const missing = [
+      !r.tax_code && "tax code", r.equalizer === null && "equalizer", r.tax_rate_percent === null && "tax rate",
+      r.orig_av === null && "AV going in", r.resolved_av === null && "decided AV",
+    ].filter(Boolean) as string[];
+    out.push({
+      appealId: r.id, year: r.assessment_year, level: r.level, decisionOn: r.decision_on, propertyId: r.property_id, accountId: r.account_id, client: r.client,
+      title: matterTitle(r.pin, r.address1 || r.name, r.city, r.township), missing: missing.length ? missing : ["tax savings"],
+    });
+  }
+  return out;
 }
 
 /** Decided Assessor and BOR reductions with a fee and no invoice yet. */
 export async function readyToBill(c: C, firmId: number) {
   const rows = (await c.query<{ id: number }>(
     `SELECT a.id FROM appeals a
-      WHERE a.firm_id = $1 AND a.level IN ('assessor', 'bor') AND a.status = 'reduced' AND a.savings > 0
+      WHERE a.firm_id = $1 AND a.level IN ('assessor', 'bor') AND a.status = 'reduced' AND a.billing_skipped_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.firm_id = a.firm_id AND i.appeal_id = a.id AND i.status <> 'void')
       ORDER BY a.decision_on DESC NULLS LAST, a.id`,
     [firmId],

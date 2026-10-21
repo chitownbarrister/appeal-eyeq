@@ -13,12 +13,13 @@ import { centsToString, formatMoney, toCents } from "../../shared/money.js";
 import { todayIso } from "../today.js";
 import { httpError, idParam, hasPermission } from "./files-common.js";
 import {
-  addDays, billingRecipients, billingSettings, currentPayLink, draftInvoice, markInvoiceSent, newPayLink, nextNumber, payable, payUrl, readyToBill,
+  addDays, billingRecipients, billingSettings, currentPayLink, draftExpenseInvoice, draftInvoice, markInvoiceSent, needsTaxFigures, newPayLink, nextNumber, payable, payUrl, readyToBill,
   recordPayment, refreshTotal, revokeLinks,
 } from "../billing/core.js";
 import { invoicePdf, statementPdf } from "../billing/pdf.js";
 import { emailConfigured, escapeHtml, sendEmail, validEmail } from "../billing/email.js";
 import { chargeSaved, firmStripe } from "../billing/payments.js";
+import { addExpenseLines, balances, expenseRows } from "../billing/trust.js";
 import { friendlyStripeError, stripe, stripeConfigured, StripeError } from "../billing/stripe.js";
 
 export const billingRouter = Router();
@@ -66,6 +67,9 @@ billingRouter.get("/billing", async (req, res) => {
   const firmId = req.ctx!.firmId!;
   const out = await withContext(req.ctx!, async (c) => {
     const ready = await readyToBill(c, firmId);
+    const needs = await needsTaxFigures(c, firmId);
+    const openExpenses = (await expenseRows(c, firmId, `e.written_off_at IS NULL`, [])).filter((e) => e.state === "open");
+    const trust = await balances(c, firmId);
     const drafts = await invoiceRows(c, firmId, `i.status = 'draft'`, []);
     const unpaid = await invoiceRows(c, firmId, `i.status = 'sent'`, []);
     const paid = await invoiceRows(c, firmId, `i.status = 'paid' AND i.paid_at > now() - interval '180 days'`, []);
@@ -77,7 +81,8 @@ billingRouter.get("/billing", async (req, res) => {
     const paidThisMonth = (await c.query<{ s: string }>(`SELECT COALESCE(sum(amount), 0)::numeric(14,2) AS s FROM payments WHERE firm_id = $1 AND status = 'succeeded' AND received_on >= $2`, [firmId, monthStart])).rows[0].s;
     return {
       totals: { ready: sum(ready.map((r) => ({ total: r.fee }))), drafts: sum(drafts), outstanding: sum(unpaid), overdue: sum(unpaid.filter((u) => u.daysOverdue > 0)), paidThisMonth },
-      ready, drafts, unpaid, paid, statements, paidStatements,
+      ready, needs, drafts, unpaid, paid, statements, paidStatements, openExpenses,
+      inTrust: centsToString(trust.reduce((a, b) => a + toCents(b.balance), 0n)),
       setup: { stripe: Boolean(acct?.charges_enabled), stripeStarted: Boolean(acct), email: emailConfigured() },
     };
   });
@@ -100,6 +105,26 @@ billingRouter.post("/billing/draft", requirePermission("invoices.send"), async (
     return { drafted: made, skipped };
   });
   res.status(201).json(r);
+});
+
+/** Takes decided appeals off Ready to bill (billed in earlier software, or waived), with a reason. */
+billingRouter.post("/billing/skip", requirePermission("invoices.send"), async (req, res) => {
+  const parsed = z.object({ appealIds: z.array(z.number().int().positive()).min(1).max(500), reason: z.string().trim().min(1, "Give a reason.").max(200) }).strict().safeParse(req.body);
+  if (!parsed.success) throw httpError(400, parsed.error.issues[0].message);
+  const n = await withContext(req.ctx!, async (c) => (await c.query(
+    `UPDATE appeals SET billing_skipped_at = now(), billing_skip_reason = $3
+      WHERE firm_id = $1 AND id = ANY($2::int[]) AND billing_skipped_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.firm_id = appeals.firm_id AND i.appeal_id = appeals.id AND i.status <> 'void')`,
+    [req.ctx!.firmId, parsed.data.appealIds, parsed.data.reason],
+  )).rowCount);
+  res.json({ skipped: n });
+});
+
+billingRouter.delete("/billing/skip/:id", requirePermission("invoices.send"), async (req, res) => {
+  const aid = idParam(req);
+  if (!aid) throw httpError(400, "Invalid appeal.");
+  await withContext(req.ctx!, (c) => c.query(`UPDATE appeals SET billing_skipped_at = NULL, billing_skip_reason = NULL WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]));
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------- one invoice
@@ -171,6 +196,11 @@ billingRouter.patch("/billing/invoices/:id", requirePermission("invoices.send"),
       const keptFee = fee ? parsed.data.lines.find((l) => l.id === fee.id) : undefined;
       if (fee && !canFees && (!keptFee || toCents(keptFee.amount) !== toCents(fee.amount))) throw httpError(403, "Your role doesn't allow changing the fee.");
       if (parsed.data.lines.some((l) => l.id && !old.some((o) => o.id === l.id))) throw httpError(400, "That line isn't on this invoice.");
+      // An expense line's amount is the expense's: change the expense itself, or take the line off.
+      for (const o of old.filter((x) => x.kind === "expense")) {
+        const kept = parsed.data.lines.find((l) => l.id === o.id);
+        if (kept && toCents(kept.amount) !== toCents(o.amount)) throw httpError(400, "An expense line's amount comes from the expense. Change the expense, or remove the line.");
+      }
       await c.query(`DELETE FROM invoice_lines WHERE firm_id = $1 AND invoice_id = $2 AND NOT (id = ANY($3::int[]))`, [firmId, id, parsed.data.lines.filter((l) => l.id).map((l) => l.id)]);
       for (const [i, l] of parsed.data.lines.entries()) {
         if (l.id) await c.query(`UPDATE invoice_lines SET description = $3, amount = $4, position = $5 WHERE firm_id = $1 AND id = $2`, [firmId, l.id, l.description, l.amount, i]);
@@ -190,6 +220,27 @@ billingRouter.delete("/billing/invoices/:id", requirePermission("invoices.void")
     if (!r.rowCount) throw httpError(409, "Only a draft can be deleted. Void a sent invoice instead.");
   });
   res.json({ ok: true });
+});
+
+/** Adds the property's open expenses (marked to be recovered on an invoice) to a draft. */
+billingRouter.post("/billing/invoices/:id/add-expenses", requirePermission("invoices.send"), async (req, res) => {
+  const id = invId(req);
+  const out = await withContext(req.ctx!, async (c) => {
+    const i = (await c.query(`SELECT status FROM invoices WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, id])).rows[0];
+    if (!i) throw httpError(404, "Invoice not found.");
+    if (i.status !== "draft") throw httpError(409, "Expenses can only be added to a draft.");
+    const n = await addExpenseLines(c, req.ctx!.firmId!, id);
+    return { added: n, invoice: await invoiceDetail(c, req.ctx!.firmId!, id) };
+  });
+  res.json(out);
+});
+
+/** An invoice for a property's open expenses alone. */
+billingRouter.post("/billing/properties/:id/expense-invoice", requirePermission("invoices.send"), async (req, res) => {
+  const pid = idParam(req);
+  if (!pid) throw httpError(400, "Invalid property.");
+  const out = await withContext(req.ctx!, async (c) => invoiceDetail(c, req.ctx!.firmId!, await draftExpenseInvoice(c, req.ctx!.firmId!, req.auth!.user.id, pid)));
+  res.status(201).json(out);
 });
 
 // ---------------------------------------------------------------- sending
@@ -374,6 +425,8 @@ billingRouter.get("/billing/accounts/:id/open", async (req, res) => {
     statements: await statementRows(c, firmId, `s.account_id = $2`, [aid]),
     suggestedTo: await billingRecipients(c, firmId, aid, null),
     all: await invoiceRows(c, firmId, `i.account_id = $2`, [aid]),
+    expenses: await expenseRows(c, firmId, `e.account_id = $2`, [aid]),
+    trustBalance: (await c.query<{ s: string }>(`SELECT COALESCE(sum(amount), 0)::numeric(14,2) AS s FROM trust_entries WHERE firm_id = $1 AND account_id = $2`, [firmId, aid])).rows[0].s,
   })));
 });
 
@@ -385,6 +438,16 @@ billingRouter.get("/billing/properties/:id", async (req, res) => {
   res.json(await withContext(req.ctx!, async (c) => ({
     invoices: await invoiceRows(c, firmId, `i.property_id = $2`, [pid]),
     ready: (await readyToBill(c, firmId)).filter((r) => r.propertyId === pid),
+    needs: (await needsTaxFigures(c, firmId)).filter((r) => r.propertyId === pid),
+    expenses: await expenseRows(c, firmId, `e.property_id = $2`, [pid]),
+    settlements: (await c.query(
+      `SELECT s.id, s.status, s.refund_amount, s.fee_amount, s.expenses_amount, s.client_amount, s.refund_received_on, s.paid_on, a.assessment_year, a.level
+         FROM trust_settlements s JOIN appeals a ON a.firm_id = s.firm_id AND a.id = s.appeal_id WHERE s.firm_id = $1 AND s.property_id = $2 ORDER BY s.id DESC`,
+      [firmId, pid],
+    )).rows.map((r) => ({ id: r.id, status: r.status, refund: r.refund_amount, fee: r.fee_amount, expenses: r.expenses_amount, toClient: r.client_amount, receivedOn: r.refund_received_on, paidOn: r.paid_on, appeal: `${r.assessment_year} ${LEVEL_LABELS[r.level as Level]}` })),
+    appeals: (await c.query(`SELECT id, assessment_year, level FROM appeals WHERE firm_id = $1 AND property_id = $2 ORDER BY assessment_year DESC, id DESC`, [firmId, pid])).rows
+      .map((r) => ({ id: r.id, label: `${r.assessment_year} ${LEVEL_LABELS[r.level as Level]}` })),
+    receipts: (await c.query(`SELECT id, name FROM documents WHERE firm_id = $1 AND property_id = $2 ORDER BY name LIMIT 300`, [firmId, pid])).rows,
   })));
 });
 

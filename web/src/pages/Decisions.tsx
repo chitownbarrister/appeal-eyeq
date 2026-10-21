@@ -250,7 +250,7 @@ export function Decisions() {
       </section>
 
       {open !== null && <LetterSheet letterId={open} onClose={() => setOpen(null)} onChanged={() => void load()} />}
-      {recording && <RecordRefund refund={recording} onClose={() => setRecording(null)} onSaved={() => { setRecording(null); void act("refund", async () => "Refund recorded."); }} />}
+      {recording && <RecordRefund refund={recording} onClose={() => setRecording(null)} onSaved={() => { setRecording(null); void act("refund", async () => "Refund recorded and deposited to trust. Its settlement (fee, expenses, the client's share) is drafted in Billing, Trust for an attorney to approve."); }} />}
     </>
   );
 }

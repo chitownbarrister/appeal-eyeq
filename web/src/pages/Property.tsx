@@ -5,7 +5,7 @@ import { useSession } from "../App";
 import { useApi, useFirmUsers } from "../data";
 import { fmvFromAv, formatDate, formatMoney, formatValue, nn, reductionPct, splitMatterTitle, titleCase } from "../format";
 import {
-  APPEAL_STATUS_LABELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS,
+  APPEAL_STATUS_LABELS, LEVELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS,
   type AppealStatus, type Level, type Substage,
 } from "../../../shared/domain";
 import { sumMoney } from "../../../shared/money";
@@ -414,12 +414,42 @@ function YearTrack({
 }
 
 // ---------------------------------------------------------------- appeals table
-function AppealsTab({ appeals, canEdit, onCreate, onOpen }: { appeals: AppealRow[]; canEdit: boolean; onCreate: () => void; onOpen: (a: AppealRow) => void }) {
+const FILTER_KEY = "aeq.appealFilters";
+const STATUS_ORDER: AppealStatus[] = ["open", "waiting_decision", "reduced", "no_change", "increased", "withdrawn", "dismissed"];
+type AppealFilters = { year: string; level: string; status: string };
+function readFilters(): AppealFilters {
+  try {
+    const f = JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}");
+    return { year: typeof f.year === "string" ? f.year : "", level: typeof f.level === "string" ? f.level : "", status: typeof f.status === "string" ? f.status : "" };
+  } catch { return { year: "", level: "", status: "" }; }
+}
+
+function AppealsTab({ appeals: all, canEdit, onCreate, onOpen }: { appeals: AppealRow[]; canEdit: boolean; onCreate: () => void; onOpen: (a: AppealRow) => void }) {
+  // Filters, one choice per dropdown (Dillon, Oct 21). Remembered on this browser.
+  const [f, setF] = useState<AppealFilters>(readFilters);
+  const years = [...new Set(all.map((a) => a.assessment_year))].sort((a, b) => b - a);
+  const fy = f.year && years.includes(Number(f.year)) ? f.year : "";
+  const set = (next: AppealFilters) => { setF(next); try { localStorage.setItem(FILTER_KEY, JSON.stringify(next)); } catch { /* private window */ } };
+  const appeals = all.filter((a) => (!fy || a.assessment_year === Number(fy)) && (!f.level || a.level === f.level) && (!f.status || a.status === f.status));
+  const filtered = Boolean(fy || f.level || f.status);
   const achieved = sumMoney(appeals.filter((a) => a.status === "reduced" && a.savings && !a.exclude_from_totals).map((a) => a.savings!));
   return (
     <>
       <div className="tbar">
-        <span className="meta">{appeals.length} appeal{appeals.length === 1 ? "" : "s"} · achieved savings {formatMoney(achieved)}</span>
+        <select className="in" style={{ width: 130, height: 30 }} aria-label="Filter by assessment year" value={fy} onChange={(e) => set({ ...f, year: e.target.value })}>
+          <option value="">All years</option>
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select className="in" style={{ width: 170, height: 30 }} aria-label="Filter by level" value={f.level} onChange={(e) => set({ ...f, level: e.target.value })}>
+          <option value="">All levels</option>
+          {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
+        </select>
+        <select className="in" style={{ width: 190, height: 30 }} aria-label="Filter by status" value={f.status} onChange={(e) => set({ ...f, status: e.target.value })}>
+          <option value="">All statuses</option>
+          {STATUS_ORDER.map((st) => <option key={st} value={st}>{APPEAL_STATUS_LABELS[st]}</option>)}
+        </select>
+        {filtered && <button type="button" className="lk" onClick={() => set({ year: "", level: "", status: "" })}>Clear filters</button>}
+        <span className="meta">{filtered ? `${appeals.length} of ${all.length} appeals` : `${all.length} appeal${all.length === 1 ? "" : "s"}`} · achieved savings {formatMoney(achieved)}</span>
         <span className="sp" />
         {canEdit && <button className="btn small" onClick={onCreate}>+ Create appeal</button>}
       </div>
@@ -455,13 +485,13 @@ function AppealsTab({ appeals, canEdit, onCreate, onOpen }: { appeals: AppealRow
                 </td>
               </tr>
             ))}
-            {appeals.length === 0 && <tr><td colSpan={15} className="meta" style={{ textAlign: "center", padding: 20 }}>No appeals yet.</td></tr>}
+            {appeals.length === 0 && <tr><td colSpan={15} className="meta" style={{ textAlign: "center", padding: 20 }}>{filtered ? "No appeals match these filters." : "No appeals yet."}</td></tr>}
           </tbody>
         </table>
       </div>
       <p className="meta" style={{ marginTop: 10 }}>
         Click a row to see and edit its values. FMV = AV ÷ level of assessment.
-        {appeals.some((a) => a.calc_override) && " Rows marked \u201centered by hand\u201d keep their tax figures as entered (for example, imported from the prior software) and aren't recalculated."}
+        {all.some((a) => a.calc_override) && " Rows marked \u201centered by hand\u201d keep their tax figures as entered (for example, imported from the prior software) and aren't recalculated."}
       </p>
     </>
   );

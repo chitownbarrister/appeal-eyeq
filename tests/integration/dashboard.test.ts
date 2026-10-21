@@ -26,7 +26,9 @@ describe("dashboard figures on the sample data", () => {
   it("headline numbers", () => {
     expect(d.today).toBe("2026-10-19");
     expect(d.cycle).toBe(2026);
-    expect(d.kpis).toEqual({ unfiled: 5, savingsInPlay: "274084.32", readyToBill: "15060.00", forecastSixMonths: "94452.00", stalled: 2 });
+    // Ready to bill is Billing's figure (nothing billable in the sample: 1044 Tower is no-fee); the two
+    // decisions in at estimated savings show as pending until their outcomes are entered.
+    expect(d.kpis).toEqual({ unfiled: 5, savingsInPlay: "274084.32", readyToBill: "0.00", decisionsPending: "15060.00", decisionsPendingCount: 2, forecastSixMonths: "94452.00", stalled: 2 });
     expect(d.nextClose).toMatchObject({ label: "Elk Grove", levelShort: "BOR", closes_on: "2026-10-27", days_left: 8, unfiled: 1 });
   });
 
@@ -104,7 +106,7 @@ describe("links behind the numbers", () => {
     const idOf = (a: string) => list.find((p) => p.address1 === a)!.id;
     const sorted = (xs: number[]) => [...xs].sort((a, b) => a - b);
     expect(sorted(d.links.unfiled)).toEqual(sorted(list.filter((p) => p.unfiled_window_open).map((p) => p.id)));
-    expect(sorted(d.links.readyToBill)).toEqual(sorted([idOf("820 S. Clinton St."), idOf("1300 Sheridan Rd.")]));
+    expect(d.links.readyToBill).toEqual([]);
     expect(d.links.forecastSixMonths).toHaveLength(10);
     const elk = d.windowWatch.find((w: { label: string }) => w.label === "Elk Grove");
     expect(sorted(elk.tagged_ids)).toEqual(sorted([idOf("1700 Busse Rd."), idOf("2200 Pratt Blvd.")]));
@@ -134,7 +136,7 @@ describe("the dashboard only reads", () => {
 describe("firm isolation", () => {
   it("another firm's dashboard has none of Nichols Law's figures, and its own appeals don't leak in", async () => {
     const o = (await call(env.base, olivia, "GET", "/api/firm/dashboard")).body;
-    expect(o.kpis).toEqual({ unfiled: 0, savingsInPlay: "0.00", readyToBill: "0.00", forecastSixMonths: "0.00", stalled: 0 });
+    expect(o.kpis).toEqual({ unfiled: 0, savingsInPlay: "0.00", readyToBill: "0.00", decisionsPending: "0.00", decisionsPendingCount: 0, forecastSixMonths: "0.00", stalled: 0 });
     expect(o.windowWatch).toEqual([]);
     expect(o.winRates.level).toEqual([]);
     expect(o.forecast.items).toEqual([]);

@@ -110,7 +110,7 @@ describe("firm admins and the Operations role", () => {
   it("gives Operations its own column of permissions and retires the admin ones", async () => {
     const perms = (await call(env.base, dillon, "GET", "/api/firm/permissions")).body.permissions as { role: string; permission: string }[];
     expect(new Set(perms.map((p) => p.role))).toEqual(new Set(["attorney", "analyst", "operations"]));
-    expect(perms.filter((p) => p.role === "operations")).toHaveLength(10);
+    expect(perms.filter((p) => p.role === "operations")).toHaveLength(11);
     expect(perms.some((p) => ["users.manage", "support.grant", "settings.edit"].includes(p.permission))).toBe(false);
   });
 });

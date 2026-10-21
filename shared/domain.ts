@@ -80,6 +80,7 @@ export const PERMISSIONS = [
   "fees.edit",
   "invoices.send",
   "invoices.void",
+  "trust.approve",
   "decisions.apply",
   "files.delete",
   "files.delete_protected",
@@ -91,6 +92,7 @@ export type Permission = (typeof PERMISSIONS)[number];
 /** Permissions a new firm does NOT give every role. Everything else starts allowed for all roles. */
 export const PERMISSION_DEFAULT_ROLES: Partial<Record<Permission, readonly Role[]>> = {
   "files.delete_protected": ["attorney"],
+  "trust.approve": ["attorney"],
 };
 export function defaultAllowed(role: Role, permission: Permission): boolean {
   const only = PERMISSION_DEFAULT_ROLES[permission];

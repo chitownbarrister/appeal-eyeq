@@ -185,7 +185,7 @@ export async function resetSampleFirm(c: pg.PoolClient, firmId: number): Promise
   // Decision uploads first (their letters and stored scans go with them), since letters point at appeals.
   // Billing first (payments point at invoices and statements, invoices at appeals), then decision uploads.
   await c.query(`DELETE FROM pay_links WHERE firm_id = $1`, [firmId]);
-  for (const t of ["payment_allocations", "payments", "email_log", "invoices", "statements"]) {
+  for (const t of ["payment_allocations", "payments", "email_log", "trust_entries", "invoices", "statements", "trust_settlements", "expenses", "invoice_counters"]) {
     await c.query(`DELETE FROM ${t} WHERE firm_id = $1`, [firmId]);
   }
   for (const t of ["decision_uploads", "deadlines", "activities", "contacts", "appeals", "parcels", "properties", "accounts"]) {

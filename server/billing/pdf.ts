@@ -62,8 +62,8 @@ async function billTo(c: pg.PoolClient, firmId: number, accountId: number) {
   return (await c.query(`SELECT name, address1, address2, city, state, zip FROM accounts WHERE firm_id = $1 AND id = $2`, [firmId, accountId])).rows[0];
 }
 
-function addressBlock(x: Ctx, a: { name: string; address1: string | null; address2: string | null; city: string | null; state: string | null; zip: string | null }) {
-  text(x, "BILL TO", 54, 8, { bold: true, color: MUTED });
+function addressBlock(x: Ctx, a: { name: string; address1: string | null; address2: string | null; city: string | null; state: string | null; zip: string | null }, label = "BILL TO") {
+  text(x, label, 54, 8, { bold: true, color: MUTED });
   x.y -= 14; text(x, a.name, 54, 11, { bold: true });
   for (const l of [a.address1, a.address2, [a.city, [a.state, a.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean) as string[]) { x.y -= 13; text(x, l, 54, 10); }
 }
@@ -147,5 +147,68 @@ export async function statementPdf(c: pg.PoolClient, firmId: number, statementId
   x.y -= 18; text(x, "Total due", 420, 11, { bold: true }); text(x, formatMoney(st.total), 558, 12, { bold: true, right: true });
   footer(x, st.status === "open" ? link : null, s.invoice_note,
     `This statement replaces the separate invoices listed. Payment of the full statement is due by ${fmtDate(st.due_on)}.`);
+  return Buffer.from(await doc.save());
+}
+
+/**
+ * The client's settlement letter for a refund held in trust: the refund received, the fee,
+ * any expenses the firm fronted, and what's paid to the client (and how, once paid).
+ */
+export async function settlementPdf(c: pg.PoolClient, firmId: number, settlementId: number): Promise<Buffer> {
+  const s = (await c.query(
+    `SELECT s.*, a.assessment_year, a.level, a.petition_no, p.address1, p.name AS pname, p.city, t.name AS township, ac.name AS client,
+            (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin
+       FROM trust_settlements s JOIN appeals a ON a.firm_id = s.firm_id AND a.id = s.appeal_id
+       JOIN properties p ON p.firm_id = s.firm_id AND p.id = s.property_id LEFT JOIN townships t ON t.id = p.township_id
+       JOIN accounts ac ON ac.firm_id = s.firm_id AND ac.id = s.account_id
+      WHERE s.firm_id = $1 AND s.id = $2`,
+    [firmId, settlementId],
+  )).rows[0];
+  const exps = (await c.query(
+    `SELECT e.incurred_on, e.vendor, e.description, se.amount FROM settlement_expenses se JOIN expenses e ON e.firm_id = se.firm_id AND e.id = se.expense_id
+      WHERE se.firm_id = $1 AND se.settlement_id = $2 ORDER BY e.incurred_on, e.id`,
+    [firmId, settlementId],
+  )).rows;
+  const level = s.level === "ptab" ? "Property Tax Appeal Board" : "Circuit Court";
+  const { doc, x } = await start(c, firmId, s.status === "paid" ? "REFUND SETTLEMENT" : s.status === "void" ? "VOID" : "SETTLEMENT (DRAFT)");
+  const top = x.y;
+  addressBlock(x, await billTo(c, firmId, s.account_id), "CLIENT");
+  const left = x.y;
+  x.y = top;
+  for (const [k, v] of [["Refund received", fmtDate(s.refund_received_on)], ["Paid to you", s.paid_on ? fmtDate(s.paid_on) : "Pending"]] as [string, string][]) {
+    text(x, k, 400, 9, { color: MUTED }); text(x, v, 558, 10, { right: true }); x.y -= 15;
+  }
+  x.y = Math.min(left, x.y) - 26;
+  text(x, "MATTER", 54, 8, { bold: true, color: MUTED });
+  x.y -= 14; text(x, matterTitle(s.pin, s.address1 || s.pname, s.city, s.township), 54, 10);
+  x.y -= 13; text(x, `${s.assessment_year} ${level} appeal${s.petition_no ? `, ${s.petition_no}` : ""}`, 54, 10, { color: MUTED });
+  x.y -= 24;
+  for (const l of wrap(x.font, `The refund from your ${level} appeal arrived and was deposited to our client trust account. This is how it was divided.`, 10, 504)) { text(x, l, 54, 10); x.y -= 14; }
+  x.y -= 10;
+  const row = (label: string, amount: string, o: { bold?: boolean; minus?: boolean } = {}) => {
+    text(x, label, 54, 10, { bold: o.bold }); text(x, `${o.minus ? "Less " : ""}${formatMoney(amount)}`, 558, 10, { right: true, bold: o.bold }); x.y -= 16;
+  };
+  row("Refund received, including interest", s.refund_amount);
+  const basis = s.fee_basis ?? {};
+  const feeLabel = basis.noFee ? "Our fee (waived)" : basis.flat ? "Our fee (flat fee)" : `Our fee, ${basis.percent ?? ""}% of the refund${basis.cap ? `, capped at ${formatMoney(basis.cap)}` : ""}`;
+  row(feeLabel, s.fee_amount, { minus: true });
+  if (exps.length) {
+    row("Expenses we advanced for you", s.expenses_amount, { minus: true });
+    for (const e of exps) {
+      x.y += 2;
+      text(x, `${fmtDate(e.incurred_on)}  ${e.vendor}: ${e.description}`.slice(0, 95), 70, 9, { color: MUTED }); text(x, formatMoney(e.amount), 480, 9, { right: true, color: MUTED });
+      x.y -= 13;
+    }
+    x.y -= 3;
+  }
+  x.page.drawLine({ start: { x: 300, y: x.y + 6 }, end: { x: 558, y: x.y + 6 }, thickness: 0.6, color: LINE });
+  x.y -= 6;
+  row(s.status === "paid" ? "Paid to you" : "To be paid to you", s.client_amount, { bold: true });
+  x.y -= 16;
+  if (s.status === "paid") {
+    const how = s.payout_method === "ach" ? `by ACH${s.payout_reference ? ` (reference ${s.payout_reference})` : ""}` : `by check${s.payout_reference ? ` number ${s.payout_reference}` : ""}`;
+    for (const l of wrap(x.font, `We paid ${formatMoney(s.client_amount)} to you ${how} on ${fmtDate(s.paid_on)}.`, 10, 504)) { text(x, l, 54, 10); x.y -= 14; }
+  }
+  if (s.note) for (const l of wrap(x.font, s.note, 9, 504)) { x.y -= 4; text(x, l, 54, 9, { color: MUTED }); x.y -= 10; }
   return Buffer.from(await doc.save());
 }

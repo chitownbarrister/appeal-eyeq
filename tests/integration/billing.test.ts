@@ -359,7 +359,7 @@ describe("isolation", () => {
     expect((await post(olivia, `/api/firm/billing/invoices/${inv1}/link`)).status).toBe(404);
     expect((await post(olivia, "/api/firm/billing/statements", { accountId: 1, invoiceIds: [inv1, inv1 + 1], to: [], email: false })).status).toBe(404);
     expect((await get(olivia, "/api/firm/billing/settings")).body.stripe).toBeNull();
-    expect((await get(olivia, `/api/firm/billing/properties/${a1.propertyId}`)).body).toEqual({ invoices: [], ready: [] });
+    expect((await get(olivia, `/api/firm/billing/properties/${a1.propertyId}`)).body).toEqual({ invoices: [], ready: [], needs: [], expenses: [], settlements: [], appeals: [], receipts: [] });
     expect((await get(olivia, `/api/firm/billing/accounts/${a1.accountId}/open`)).body).toMatchObject({ invoices: [], statements: [], all: [], suggestedTo: [] });
     expect((await get(dillon, `/api/firm/billing/properties/${a1.propertyId}`)).body.invoices[0]).toMatchObject({ id: inv1, number: "NL-2026-0001" });
   });

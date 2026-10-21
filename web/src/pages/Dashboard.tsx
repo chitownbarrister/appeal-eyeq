@@ -11,7 +11,7 @@ interface WinGroup { key: string; decided: number; won: number; avgReduction: nu
 interface ForecastItem { property_id: number; short: string; account: string; level: Level; kind: "decided" | "expected"; month: string; fee: string; likely: string | null; basis: string }
 export interface DashboardData {
   today: string; cycle: number;
-  kpis: { unfiled: number; savingsInPlay: string; readyToBill: string; forecastSixMonths: string; stalled: number };
+  kpis: { unfiled: number; savingsInPlay: string; readyToBill: string; decisionsPending: string; decisionsPendingCount: number; forecastSixMonths: string; stalled: number };
   links: { unfiled: number[]; inPlay: number[]; achieved: number[]; readyToBill: number[]; forecastSixMonths: number[] };
   nextClose: WindowRow | null;
   windowWatch: WindowRow[];
@@ -80,7 +80,8 @@ export function Dashboard() {
               <span className="note">{d.nextClose ? `Next close: ${d.nextClose.label}, ${formatDate(d.nextClose.closes_on)}` : "No open windows"}</span>
             </Link>
             <KpiTile to={setOrNull(d.links.inPlay, "Estimated savings in play")} label="Estimated savings in play" value={formatMoney(s.savingsInPlay)} note="First-year, open appeals" />
-            <KpiTile to={setOrNull(d.links.readyToBill, "Fees ready to bill")} label="Fees ready to bill" value={formatMoney(d.kpis.readyToBill)} note="Decisions in, not invoiced" />
+            <KpiTile to="/billing" label="Fees ready to bill" value={formatMoney(d.kpis.readyToBill)}
+              note={d.kpis.decisionsPendingCount ? `Plus about ${formatMoney(d.kpis.decisionsPending)} once ${d.kpis.decisionsPendingCount === 1 ? "1 decision is" : `${d.kpis.decisionsPendingCount} decisions are`} entered` : "Decided, not invoiced"} />
             <KpiTile
               to={setOrNull(d.links.forecastSixMonths, "Fee forecast, next 6 months")} label="Fee forecast, next 6 months" value={formatMoney(d.kpis.forecastSixMonths)}
               note={d.forecast.likelySixMonths ? `${formatMoney(d.forecast.likelySixMonths)} at your win rates` : "At target values"}

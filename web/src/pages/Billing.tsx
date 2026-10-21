@@ -9,17 +9,23 @@ import { useSession } from "../App";
 import { formatDate, formatMoney } from "../format";
 import { LEVEL_LABELS, type Level } from "../../../shared/domain";
 import { BillingList, InvoiceSheet, InvoiceStatus, Matter, StatementSheet, type InvoiceRow, type StatementRow } from "../components/BillingSheets";
+import { ExpenseList, SettlementList, SettlementSheet, type ExpenseRow, type SettlementRow } from "../components/TrustSheets";
+import { todayIso } from "../format";
 
 interface Ready { appealId: number; year: number; level: Level; decisionOn: string | null; savings: string; fee: string; description: string; propertyId: number; accountId: number; client: string; title: string }
 interface Data {
   totals: { ready: string; drafts: string; outstanding: string; overdue: string; paidThisMonth: string };
-  ready: Ready[]; drafts: InvoiceRow[]; unpaid: InvoiceRow[]; paid: InvoiceRow[]; statements: StatementRow[]; paidStatements: StatementRow[];
+  ready: Ready[]; needs: Needs[]; openExpenses: ExpenseRow[]; inTrust: string; drafts: InvoiceRow[]; unpaid: InvoiceRow[]; paid: InvoiceRow[]; statements: StatementRow[]; paidStatements: StatementRow[];
   setup: { stripe: boolean; stripeStarted: boolean; email: boolean };
 }
-type View = "ready" | "drafts" | "unpaid" | "statements" | "paid";
+interface Needs { appealId: number; year: number; level: Level; decisionOn: string | null; propertyId: number; accountId: number; client: string; title: string; missing: string[] }
+interface Trust { draft: SettlementRow[]; approved: SettlementRow[]; paid: SettlementRow[]; unsettled: { appealId: number; propertyId: number; client: string; appeal: string; refund: string; receivedOn: string; title: string }[]; balances: { accountId: number; client: string; balance: string; lastOn: string }[]; inTrust: string }
+type View = "ready" | "drafts" | "unpaid" | "statements" | "trust" | "expenses" | "paid";
 const VIEWS: { id: View; label: string }[] = [
-  { id: "ready", label: "Ready to bill" }, { id: "drafts", label: "Drafts" }, { id: "unpaid", label: "Unpaid" }, { id: "statements", label: "Statements" }, { id: "paid", label: "Paid" },
+  { id: "ready", label: "Ready to bill" }, { id: "drafts", label: "Drafts" }, { id: "unpaid", label: "Unpaid" }, { id: "statements", label: "Statements" },
+  { id: "trust", label: "Trust" }, { id: "expenses", label: "Expenses" }, { id: "paid", label: "Paid" },
 ];
+const SKIP_REASONS = ["Billed in earlier software", "Fee waived"];
 
 export function Billing() {
   const { can, me } = useSession();
@@ -30,7 +36,12 @@ export function Billing() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const [open, setOpen] = useState<{ kind: "invoice" | "statement"; id: number } | null>(null);
+  const [open, setOpen] = useState<{ kind: "invoice" | "statement" | "settlement"; id: number } | null>(null);
+  const [trust, setTrust] = useState<Trust | null>(null);
+  const [skipPick, setSkipPick] = useState<number[]>([]);
+  const [skipReason, setSkipReason] = useState(SKIP_REASONS[0]);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [range, setRange] = useState({ from: `${todayIso().slice(0, 4)}-01-01`, to: todayIso() });
   const [picked, setPicked] = useState<number[]>([]);
   const [useEmail, setUseEmail] = useState(true);
   const shown: View = asked && VIEWS.some((v) => v.id === asked) ? asked : data && data.ready.length === 0 && data.drafts.length > 0 ? "drafts" : "ready";
@@ -40,6 +51,8 @@ export function Billing() {
       const d = await api<Data>("/firm/billing");
       setData(d);
       setPicked((p) => p.filter((id) => d.drafts.some((x) => x.id === id)));
+      setSkipPick((p) => p.filter((id) => d.needs.some((x) => x.appealId === id) || d.ready.some((x) => x.appealId === id)));
+      setTrust(await api<Trust>("/firm/trust"));
       setError("");
     } catch (e) { setError(errorText(e)); }
   }, []);
@@ -66,8 +79,18 @@ export function Billing() {
     ].filter(Boolean).join(" ");
   });
 
+  const skip = (ids: number[]) => act("skip", async () => {
+    const r = await api<{ skipped: number }>("/firm/billing/skip", { method: "POST", body: { appealIds: ids, reason: skipReason } });
+    setSkipPick([]);
+    return `${r.skipped} appeal${r.skipped === 1 ? "" : "s"} taken off Ready to bill (${skipReason.toLowerCase()}).`;
+  });
+  const draftAgain = (appealId: number) => act("settle", async () => {
+    const r = await api<{ id: number }>(`/firm/trust/appeals/${appealId}/settlement`, { method: "POST", body: {} });
+    setOpen({ kind: "settlement", id: r.id });
+  });
   const t = data?.totals;
-  const count = (v: View) => (!data ? 0 : v === "ready" ? data.ready.length : v === "drafts" ? data.drafts.length : v === "unpaid" ? data.unpaid.length : v === "statements" ? data.statements.length : data.paid.length + data.paidStatements.length);
+  const count = (v: View) => (!data ? 0 : v === "ready" ? data.ready.length : v === "drafts" ? data.drafts.length : v === "unpaid" ? data.unpaid.length : v === "statements" ? data.statements.length
+    : v === "trust" ? (trust ? trust.draft.length + trust.approved.length + trust.unsettled.length : 0) : v === "expenses" ? data.openExpenses.length : data.paid.length + data.paidStatements.length);
   const isAdmin = !me.user.isSuperAdmin && me.user.isFirmAdmin;
 
   return (
@@ -78,7 +101,20 @@ export function Billing() {
           <h1>Invoices and payments</h1>
           <p className="subtitle">Each decided Assessor or Board of Review reduction gets a draft invoice for its fee. Check the drafts, send them, and clients pay online by bank account or card, or by check.</p>
         </div>
+        <div className="actions">
+          <button type="button" className="btn secondary" aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}>Accounting export</button>
+        </div>
       </div>
+      {exportOpen && (
+        <div className="card pad" style={{ marginBottom: 14 }}>
+          <div className="tbar" style={{ marginBottom: 0, alignItems: "flex-end" }}>
+            <div className="fld"><label htmlFor="ex-from">From</label><input id="ex-from" className="in" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} /></div>
+            <div className="fld"><label htmlFor="ex-to">To</label><input id="ex-to" className="in" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} /></div>
+            <a className="btn" href={`/api/firm/accounting/export?from=${range.from}&to=${range.to}`} download>Download CSV</a>
+            <span className="meta" style={{ flex: 1, minWidth: 220 }}>Every invoice, payment, expense and trust entry in the range as balanced debits and credits, for your accountant or to import into your books.</span>
+          </div>
+        </div>
+      )}
 
       {data && (!data.setup.stripe || !data.setup.email) && (
         <div className="notice-box" role="status">
@@ -132,13 +168,50 @@ export function Billing() {
                         <td>{r.decisionOn ? formatDate(r.decisionOn) : "—"}</td>
                         <td className="num">{formatMoney(r.savings)}</td>
                         <td className="num"><b>{formatMoney(r.fee)}</b><span className="mn" style={{ display: "block" }} title={r.description}>{r.description.split(": ")[1]?.split(" of ")[0] ?? ""}</span></td>
-                        <td className="num">{canSend && <button type="button" className="btn small" disabled={!!busy} onClick={() => void draftAll([r.appealId])}>Draft</button>}</td>
+                        <td className="num" style={{ whiteSpace: "nowrap" }}>
+                          {canSend && <input type="checkbox" aria-label={`Choose ${r.title}`} style={{ marginRight: 10 }} checked={skipPick.includes(r.appealId)} onChange={(e) => setSkipPick(e.target.checked ? [...skipPick, r.appealId] : skipPick.filter((x) => x !== r.appealId))} />}
+                          {canSend && <button type="button" className="btn small" disabled={!!busy} onClick={() => void draftAll([r.appealId])}>Draft</button>}
+                        </td>
                       </tr>
                     ))}
                     {data.ready.length === 0 && <tr><td colSpan={7} className="meta" style={{ textAlign: "center", padding: 20 }}>Nothing ready to bill.</td></tr>}
                   </tbody>
                 </table>
               </div>
+              {data.needs.length > 0 && (
+                <>
+                  <h3 className="subhead">Needs tax figures ({data.needs.length})</h3>
+                  <p className="meta" style={{ marginTop: 0 }}>Decided reductions with a fee whose tax savings can't be worked out yet. Enter what's missing on the appeal's Values tab and they move up to Ready to bill. History billed before Appeal EyeQ can be taken off the list.</p>
+                  <div className="tw">
+                    <table className="compact">
+                      <thead><tr>{canSend && <th><input type="checkbox" aria-label="Choose every appeal that needs tax figures" checked={data.needs.every((n) => skipPick.includes(n.appealId))} onChange={(e) => setSkipPick(e.target.checked ? [...new Set([...skipPick, ...data.needs.map((n) => n.appealId)])] : skipPick.filter((x) => !data.needs.some((n) => n.appealId === x)))} /></th>}<th>Property</th><th>Client</th><th>Appeal</th><th>Missing</th><th /></tr></thead>
+                      <tbody>
+                        {data.needs.map((n) => (
+                          <tr key={n.appealId}>
+                            {canSend && <td><input type="checkbox" aria-label={`Choose ${n.title}`} checked={skipPick.includes(n.appealId)} onChange={(e) => setSkipPick(e.target.checked ? [...skipPick, n.appealId] : skipPick.filter((x) => x !== n.appealId))} /></td>}
+                            <td><Matter title={n.title} propertyId={n.propertyId} /></td>
+                            <td><Link to={`/accounts/${n.accountId}`}>{n.client}</Link></td>
+                            <td>{n.year}<span className="mn" style={{ display: "block" }}>{LEVEL_LABELS[n.level]}</span></td>
+                            <td><span className="warn-text">{n.missing.join(", ")}</span></td>
+                            <td className="num"><Link className="btn small secondary" to={`/properties/${n.propertyId}?appeal=${n.appealId}`}>Enter figures</Link></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {canSend && skipPick.length > 0 && (
+                <div className="notice-box" style={{ marginTop: 12 }}>
+                  <span>{skipPick.length} chosen. Take {skipPick.length === 1 ? "it" : "them"} off Ready to bill because:</span>
+                  <select className="in" style={{ width: 230, height: 30 }} aria-label="Reason" value={skipReason} onChange={(e) => setSkipReason(e.target.value)}>
+                    {SKIP_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <span className="sp" />
+                  <button type="button" className="btn small" disabled={busy === "skip"} onClick={() => void skip(skipPick)}>Not billed here</button>
+                  <button type="button" className="btn small ghost" onClick={() => setSkipPick([])}>Clear</button>
+                </div>
+              )}
             </>
           )}
 
@@ -181,11 +254,63 @@ export function Billing() {
               <BillingList invoices={[]} statements={data.statements} onOpen={setOpen} showProperty={false} empty="No open statements." />
             </>
           )}
+          {data && shown === "trust" && trust && (
+            <>
+              <div className="tbar">
+                <span className="meta">{formatMoney(trust.inTrust)} held in trust for {trust.balances.length} client{trust.balances.length === 1 ? "" : "s"}. PTAB and Circuit Court refunds come in here when recorded on Decisions, Awaiting refund.</span>
+              </div>
+              <h3 className="subhead" style={{ marginTop: 0 }}>To approve ({trust.draft.length})</h3>
+              <SettlementList rows={trust.draft} onOpen={(id) => setOpen({ kind: "settlement", id })} />
+              <h3 className="subhead">Approved, to pay ({trust.approved.length})</h3>
+              <SettlementList rows={trust.approved} onOpen={(id) => setOpen({ kind: "settlement", id })} />
+              {trust.unsettled.length > 0 && (
+                <>
+                  <h3 className="subhead">Refunds in trust with no settlement</h3>
+                  <div className="tw">
+                    <table className="compact">
+                      <thead><tr><th>Property</th><th>Client</th><th>Appeal</th><th>Refund in</th><th className="num">Refund</th><th /></tr></thead>
+                      <tbody>
+                        {trust.unsettled.map((u) => (
+                          <tr key={u.appealId}>
+                            <td><Matter title={u.title} propertyId={u.propertyId} /></td><td>{u.client}</td><td>{u.appeal}</td><td>{formatDate(u.receivedOn)}</td><td className="num">{formatMoney(u.refund)}</td>
+                            <td className="num">{canSend && <button type="button" className="btn small" disabled={!!busy} onClick={() => void draftAgain(u.appealId)}>Draft settlement</button>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              <h3 className="subhead">Client trust balances</h3>
+              <div className="tw">
+                <table className="compact">
+                  <thead><tr><th>Client</th><th>Last entry</th><th className="num">Balance</th></tr></thead>
+                  <tbody>
+                    {trust.balances.map((b) => <tr key={b.accountId}><td><Link to={`/accounts/${b.accountId}`}>{b.client}</Link></td><td>{formatDate(b.lastOn)}</td><td className="num">{formatMoney(b.balance)}</td></tr>)}
+                    {trust.balances.length === 0 && <tr><td colSpan={3} className="meta" style={{ textAlign: "center", padding: 20 }}>Nothing held in trust.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {trust.paid.length > 0 && (
+                <>
+                  <h3 className="subhead">Paid out in the last year</h3>
+                  <SettlementList rows={trust.paid} onOpen={(id) => setOpen({ kind: "settlement", id })} />
+                </>
+              )}
+            </>
+          )}
+          {data && shown === "expenses" && (
+            <>
+              <p className="meta" style={{ marginTop: 0 }}>Open expenses the firm fronted, not yet on an invoice or a settlement. Add and change them on each property's Billing tab.</p>
+              <ExpenseList rows={data.openExpenses} showProperty />
+            </>
+          )}
           {data && shown === "paid" && <BillingList invoices={data.paid} statements={data.paidStatements} onOpen={setOpen} empty="Nothing paid in the last six months." />}
         </div>
       </section>
 
       {open?.kind === "invoice" && <InvoiceSheet invoiceId={open.id} emailOn={data?.setup.email ?? false} onClose={() => setOpen(null)} onChanged={() => void load()} />}
+      {open?.kind === "settlement" && <SettlementSheet settlementId={open.id} onClose={() => setOpen(null)} onChanged={() => void load()} />}
       {open?.kind === "statement" && <StatementSheet statementId={open.id} onClose={() => setOpen(null)} onChanged={() => void load()} onOpenInvoice={(id) => setOpen({ kind: "invoice", id })} />}
     </>
   );

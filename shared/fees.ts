@@ -42,3 +42,8 @@ export function firstYearFee(savings: string | null, fee: EffectiveFee): string 
   if (savings === null || fee.basis !== "first_year_savings") return null;
   return feeAmount(savings, fee.percent);
 }
+
+/** Fee on a PTAB or Circuit Court refund check (refund and interest together). */
+export function refundFee(refund: string, fee: EffectiveFee): string {
+  return feeAmount(refund, fee.percent);
+}
