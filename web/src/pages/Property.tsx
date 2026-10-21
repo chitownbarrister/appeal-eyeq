@@ -12,6 +12,7 @@ import { sumMoney } from "../../../shared/money";
 import type { EffectiveFee } from "../../../shared/fees";
 import { AppealSheet, FeeSheet, PropertySheet, type PropertyRecord } from "../components/forms";
 import { ValuesEditor } from "../components/ValuesEditor";
+import { PropertyBilling } from "../components/BillingSheets";
 import { Sheet } from "../components/Sheet";
 import { DeadlinesBlock, DeadlineSheet } from "../components/Deadlines";
 import { FilesTab } from "../components/Files";
@@ -53,11 +54,11 @@ interface Detail {
 }
 interface PropertyLetter { id: number; status: "review" | "clean" | "applied"; kind: LetterSummary["kind"]; appealId: number | null; appliedAt: string | null; letterDate: string | null; filedPath: string | null; fileError: string | null; filed: boolean }
 
-type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "files";
+type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "billing" | "files";
 const TABS: { id: Tab; label: string; soon?: string }[] = [
   { id: "appeals", label: "Appeals" }, { id: "values", label: "Values" }, { id: "parcels", label: "Parcels" },
   { id: "contacts", label: "Contacts" }, { id: "activities", label: "Activities" },
-  { id: "files", label: "Files" },
+  { id: "billing", label: "Billing" }, { id: "files", label: "Files" },
 ];
 
 const statusPill = (s: AppealStatus) => (s === "reduced" ? "ok" : s === "waiting_decision" || s === "open" ? "warn" : s === "increased" ? "crit" : "");
@@ -294,6 +295,7 @@ export function Property() {
           {tab === "parcels" && <ParcelsTab propertyId={p.id} parcels={data.parcels} canEdit={can("properties.edit")} onChanged={() => void refreshAll()} />}
           {tab === "contacts" && <ContactsTab propertyId={p.id} accountId={p.account_id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void refreshAll()} />}
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
+          {tab === "billing" && <PropertyBilling propertyId={p.id} />}
           {tab === "files" && <FilesTab key={`${p.id}:${askedFile ?? ""}`} propertyId={p.id} propertyStatus={p.status} canEdit={can("properties.edit")} initialPath={params.get("path") ?? ""} initialFile={askedFile} />}
         </div>
       </section>

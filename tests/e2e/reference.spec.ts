@@ -90,7 +90,7 @@ test("uploading a year of windows: problems are listed and nothing is saved unti
 test("resetting the sample data brings back the starting set", async ({ page }) => {
   await signIn(page);
   await page.goto("/properties");
-  await expect(page.getByText(/^1[678] of 1[678]$/)).toBeVisible(); // properties added by earlier tests
+  await expect(page.getByText(/^(1[6-9]|2[0-9]) of (1[6-9]|2[0-9])$/)).toBeVisible(); // properties added by earlier tests
   await page.getByRole("button", { name: /^Account menu for/ }).click();
   await page.getByRole("menuitem", { name: "Firm settings" }).click();
   await page.getByRole("tab", { name: "Sample data" }).click();

@@ -20,6 +20,14 @@ const env = {
   DROPBOX_WEB_URL: "https://www.dropbox.test",
   TOKEN_ENCRYPTION_KEY: "e2e-encryption-key-0123456789abcdef",
   PUBLIC_BASE_URL: "http://127.0.0.1:3100",
+  // Stripe and Postmark point at the fake server below (tests/fake-stripe), so connecting,
+  // paying on Checkout and emailing invoices run end to end.
+  STRIPE_SECRET_KEY: "sk_test_fake_platform_key",
+  STRIPE_API_URL: "http://127.0.0.1:3198",
+  STRIPE_WEBHOOK_SECRET: "whsec_fake_secret_for_tests",
+  POSTMARK_SERVER_TOKEN: "postmark-test-token",
+  POSTMARK_FROM: "billing@appealeyeq.test",
+  POSTMARK_API_URL: "http://127.0.0.1:3198",
 };
 
 export default defineConfig({
@@ -34,6 +42,12 @@ export default defineConfig({
     command: "npx tsx tests/fake-dropbox/server.ts",
     url: "http://127.0.0.1:3199/__test/tree",
     env: { PORT: "3199" },
+    reuseExistingServer: false,
+    timeout: 30000,
+  }, {
+    command: "npx tsx tests/fake-stripe/server.ts",
+    url: "http://127.0.0.1:3198/__test/state",
+    env: { PORT: "3198", WEBHOOK_URL: "http://127.0.0.1:3100/api/stripe/webhook" },
     reuseExistingServer: false,
     timeout: 30000,
   }, {

@@ -6,8 +6,9 @@ import { formatDateTime, titleCase } from "../format";
 import { LEVEL_LABELS, PERMISSIONS, ROLES, ROLE_LABELS, type Level, type Role } from "../../../shared/domain";
 import { IntegrationsTab } from "../components/Integrations";
 import { DocumentsTab } from "../components/DocumentsSettings";
+import { BillingSettingsTab } from "../components/BillingSettings";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "audit" | "sample";
+type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "billing" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Users" },
@@ -15,6 +16,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "permissions", label: "Roles & permissions" },
   { id: "support", label: "Support access" },
   { id: "documents", label: "Documents" },
+  { id: "billing", label: "Billing" },
   { id: "integrations", label: "Integrations" },
   { id: "audit", label: "Audit log" },
 ];
@@ -47,6 +49,7 @@ export function Settings() {
       {tab === "permissions" && <PermissionsTab />}
       {tab === "support" && <SupportTab />}
       {tab === "documents" && <DocumentsTab />}
+      {tab === "billing" && <BillingSettingsTab />}
       {tab === "integrations" && <IntegrationsTab />}
       {tab === "audit" && <AuditTab />}
       {tab === "sample" && me.firm?.isSample && <SampleTab />}

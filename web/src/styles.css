@@ -717,3 +717,17 @@ table.letters td.why { max-width: 340px; font-size: 12.5px; }
   .ck-l { justify-self: start; }
   .letter-pins td:first-child .in { min-width: 140px; }
 }
+
+/* ---------------------------------------------------------------- client pay page */
+.pay-wrap { min-height: 100vh; background: var(--paper); display: flex; justify-content: center; align-items: flex-start; padding: 48px 16px; }
+.pay-card { width: 100%; max-width: 620px; padding: 32px 36px; }
+.pay-card h1 { font-size: 26px; margin: 4px 0 10px; }
+.pay-firm { border-bottom: 2px solid var(--copper); padding-bottom: 12px; margin-bottom: 22px; }
+.pay-firm-name { font-family: var(--f-display); font-size: 20px; color: var(--navy); }
+.pay-amount { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.pay-amount .num { font-family: var(--f-display); font-size: 34px; color: var(--navy); }
+.pay-items { width: 100%; margin: 6px 0 20px; }
+.pay-actions { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--done-wash); border: 1px solid var(--line); border-radius: var(--r); }
+.pay-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.pay-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
+@media (max-width: 560px) { .pay-card { padding: 22px 18px; } .pay-wrap { padding: 16px; } .pay-buttons .btn { flex: 1; } }

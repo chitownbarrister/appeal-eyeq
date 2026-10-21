@@ -29,6 +29,12 @@ Any future migration that changes firm data must set a `system` context for that
 | `SEED_SAMPLE_DATA` | No | `true` loads the Nichols Law sample firm once. Never on an instance with real clients |
 | `SAMPLE_USER_PASSWORD` | With seed | Password for the four sample users (at least 10 characters) |
 | `NODE_ENV` | Recommended | `production` on Render (secure cookies) |
+| `PUBLIC_BASE_URL` | For billing | The app's public address, used in pay links and Stripe return URLs |
+| `TOKEN_ENCRYPTION_KEY` | For billing | Encrypts stored tokens so a sent invoice's pay link can be copied again |
+| `STRIPE_SECRET_KEY` | For online payments | The platform's Stripe secret key (Connect enabled). Each firm connects its own account |
+| `STRIPE_WEBHOOK_SECRET` | For online payments | Signing secret of the Connect webhook endpoint `/api/stripe/webhook` |
+| `POSTMARK_SERVER_TOKEN` | For email | Postmark server token. Without it invoices are marked sent and pay links copied by hand |
+| `POSTMARK_FROM` | For email | A sender address on a domain verified in Postmark |
 
 ## Local development
 

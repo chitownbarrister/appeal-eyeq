@@ -14,6 +14,7 @@ import { calendarRouter } from "./calendar.js";
 import { dashboardRouter } from "./dashboard.js";
 import { filesRouter } from "./files.js";
 import { decisionsRouter } from "./decisions.js";
+import { billingRouter } from "./billing.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
@@ -23,6 +24,7 @@ firmRouter.use(calendarRouter);
 firmRouter.use(dashboardRouter);
 firmRouter.use(filesRouter);
 firmRouter.use(decisionsRouter);
+firmRouter.use(billingRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

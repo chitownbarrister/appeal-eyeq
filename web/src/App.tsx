@@ -8,7 +8,8 @@ import { Dashboard } from "./pages/Dashboard";
 import { Settings } from "./pages/Settings";
 import { MyAccount } from "./pages/MyAccount";
 import { Admin } from "./pages/Admin";
-import { Placeholder } from "./pages/Placeholder";
+import { Billing } from "./pages/Billing";
+import { Pay } from "./pages/Pay";
 import { Properties } from "./pages/Properties";
 import { Property } from "./pages/Property";
 import { Accounts } from "./pages/Accounts";
@@ -33,6 +34,13 @@ export function useSession(): Session {
 }
 
 export function App() {
+  // A client's pay link opens on its own, with no sign-in.
+  const pay = window.location.pathname.match(/^\/pay\/([A-Za-z0-9_-]{20,100})\/?$/);
+  if (pay) return <Pay token={pay[1]} />;
+  return <FirmApp />;
+}
+
+function FirmApp() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [ended, setEnded] = useState(false);
@@ -110,7 +118,7 @@ export function App() {
             <Route path="/accounts/:id" element={<Account />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/decisions" element={<Decisions />} />
-            <Route path="/billing" element={<Placeholder title="Billing" step={7} detail="Invoices, statements, payments and refunds." />} />
+            <Route path="/billing" element={<Billing />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<MyAccount />} />
             {me.user.isSuperAdmin && <Route path="/admin" element={<Admin />} />}

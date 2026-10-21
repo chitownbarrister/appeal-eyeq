@@ -7,6 +7,7 @@ import { authRouter } from "./routes/auth.js";
 import { firmRouter } from "./routes/firm.js";
 import { adminRouter } from "./routes/admin.js";
 import { referenceRouter } from "./routes/reference.js";
+import { payRouter, stripeWebhook } from "./routes/pay.js";
 
 export function createApp(): express.Express {
   const app = express();
@@ -33,6 +34,8 @@ export function createApp(): express.Express {
     next();
   });
 
+  // Stripe signs the raw body, so its webhook is read before JSON parsing (and needs no session).
+  app.use("/api", stripeWebhook);
   app.use(express.json({ limit: "4mb" }));
   app.use(loadAuth);
 
@@ -61,6 +64,7 @@ export function createApp(): express.Express {
   app.use("/api/firm", firmRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/reference", referenceRouter);
+  app.use("/api", payRouter); // the client's pay page: the link is the key, no sign-in
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });

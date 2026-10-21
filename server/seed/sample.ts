@@ -183,6 +183,11 @@ export async function resetSampleFirm(c: pg.PoolClient, firmId: number): Promise
   const firm = (await c.query<{ is_sample: boolean }>(`SELECT is_sample FROM firms WHERE id = $1`, [firmId])).rows[0];
   if (!firm?.is_sample) throw Object.assign(new Error("not sample"), { status: 403, publicMessage: "Only a sample firm can be reset." });
   // Decision uploads first (their letters and stored scans go with them), since letters point at appeals.
+  // Billing first (payments point at invoices and statements, invoices at appeals), then decision uploads.
+  await c.query(`DELETE FROM pay_links WHERE firm_id = $1`, [firmId]);
+  for (const t of ["payment_allocations", "payments", "email_log", "invoices", "statements"]) {
+    await c.query(`DELETE FROM ${t} WHERE firm_id = $1`, [firmId]);
+  }
   for (const t of ["decision_uploads", "deadlines", "activities", "contacts", "appeals", "parcels", "properties", "accounts"]) {
     await c.query(`DELETE FROM ${t} WHERE firm_id = $1`, [firmId]);
   }

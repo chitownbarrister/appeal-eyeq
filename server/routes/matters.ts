@@ -423,6 +423,11 @@ mattersRouter.delete("/properties/:id", requirePermission("properties.delete"), 
   const pid = idParam(req);
   if (!pid) return bad(res, "Invalid property.");
   const r = await withContext(req.ctx!, async (c) => {
+    // Invoices are part of the firm's billing record; drafts can go, anything sent stays.
+    if ((await c.query(`SELECT 1 FROM invoices WHERE firm_id = $1 AND property_id = $2 AND status <> 'draft'`, [req.ctx!.firmId, pid])).rowCount) {
+      throw Object.assign(new Error("invoices"), { status: 409, publicMessage: "This property has invoices, which stay in the billing record. Mark it Closed or Sold instead of deleting it." });
+    }
+    await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND property_id = $2 AND status = 'draft'`, [req.ctx!.firmId, pid]);
     // Decision letters matched to it go back to review instead of blocking the delete.
     await detachLetters(c, req.ctx!.firmId!, { propertyId: pid });
     return c.query(`DELETE FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid]);
@@ -836,6 +841,11 @@ mattersRouter.delete("/appeals/:id", requirePermission("appeals.edit"), async (r
     // and decision letters matched to it go back to review.
     await c.query(`UPDATE appeals SET target_source_appeal_id = NULL WHERE firm_id = $1 AND target_source_appeal_id = $2`, [req.ctx!.firmId, aid]);
     await detachLetters(c, req.ctx!.firmId!, { appealId: aid });
+    if ((await c.query(`SELECT 1 FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status IN ('sent', 'paid')`, [req.ctx!.firmId, aid])).rowCount) {
+      throw Object.assign(new Error("invoices"), { status: 409, publicMessage: "This appeal has an invoice that was sent. Void it in Billing first; the invoice itself stays in the record." });
+    }
+    await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status = 'draft'`, [req.ctx!.firmId, aid]);
+    await c.query(`UPDATE invoices SET appeal_id = NULL WHERE firm_id = $1 AND appeal_id = $2 AND status = 'void'`, [req.ctx!.firmId, aid]);
     return c.query(`DELETE FROM appeals WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]);
   });
   if (!r.rowCount) { res.status(404).json({ error: "Appeal not found." }); return; }

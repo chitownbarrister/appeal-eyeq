@@ -15,6 +15,7 @@ import { centsToString, toCents } from "../../shared/money.js";
 import { applyRollover, loadPins, pinTotals, refreshAppealFromPins, writePinStage } from "../appeal-pins.js";
 import { todayIso } from "../today.js";
 import { matchLetter, type MatchResult } from "./match.js";
+import { draftInvoice } from "../billing/core.js";
 import type { LetterFields } from "./parse.js";
 
 export type NextStep = "start_bor" | "bor_judgment" | "invoice" | "awaiting_refund" | "waiting_rest" | null;
@@ -164,6 +165,8 @@ export async function applyLetter(c: pg.PoolClient, firmId: number, userId: numb
     await c.query(`UPDATE appeals SET status = 'waiting_decision' WHERE firm_id = $1 AND id = $2`, [firmId, appealId]);
   }
   if (a.level === "ptab") await applyRollover(c, firmId, appealId);
+  // A reduction at the Assessor or Board of Review drafts its invoice (nothing is sent until someone sends it).
+  if (allDecided && status === "reduced" && (a.level === "assessor" || a.level === "bor")) await draftInvoice(c, firmId, userId, appealId);
 
   await c.query(
     `UPDATE decision_letters SET status = 'applied', applied_by = $3, applied_at = now(), before_apply = $4, property_id = $5, appeal_id = $6, checks = $7
@@ -194,6 +197,10 @@ export async function undoLetter(c: pg.PoolClient, firmId: number, letterId: num
   )).rowCount;
   if (later) throw httpError(409, "A later letter was applied to this appeal. Undo that one first.");
   await c.query(`SELECT 1 FROM appeals WHERE firm_id = $1 AND id = $2 FOR UPDATE`, [firmId, l.appeal_id]);
+  // A sent invoice is in the client's hands: undoing the decision under it isn't allowed. A draft just goes.
+  const inv = (await c.query<{ status: string }>(`SELECT status FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status <> 'void'`, [firmId, l.appeal_id])).rows[0];
+  if (inv && inv.status !== "draft") throw httpError(409, `This appeal's invoice is ${inv.status}. Void it in Billing before undoing the letter.`);
+  await c.query(`DELETE FROM invoices WHERE firm_id = $1 AND appeal_id = $2 AND status = 'draft'`, [firmId, l.appeal_id]);
   const snap = l.before_apply;
   const cols = Object.keys(snap.appeal).filter((k) => (APPEAL_SNAPSHOT_COLS as readonly string[]).includes(k));
   await c.query(

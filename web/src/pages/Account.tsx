@@ -8,6 +8,7 @@ import { LEVEL_LABELS, SUBSTAGE_LABELS, type Level, type Substage } from "../../
 import type { EffectiveFee } from "../../../shared/fees";
 import { AccountSheet, PropertySheet, type AccountRecord } from "../components/forms";
 import { ActivitiesTab, ContactsTab } from "./Property";
+import { ClientBilling } from "../components/BillingSheets";
 
 interface AccountDetail {
   account: AccountRecord & { rep_name: string | null };
@@ -20,7 +21,7 @@ interface AccountDetail {
   achievedSavings: string;
 }
 
-type Tab = "properties" | "details" | "contacts" | "activities";
+type Tab = "properties" | "details" | "contacts" | "activities" | "billing";
 
 export function Account() {
   const { id } = useParams();
@@ -71,7 +72,7 @@ export function Account() {
           </div>
         </div>
         <div className="subtabs" role="tablist">
-          {(["properties", "details", "contacts", "activities"] as Tab[]).map((t) => (
+          {(["properties", "details", "contacts", "activities", "billing"] as Tab[]).map((t) => (
             <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{titleCase(t)}</button>
           ))}
         </div>
@@ -138,6 +139,7 @@ export function Account() {
             </div>
           )}
           {tab === "contacts" && <ContactsTab accountId={a.id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void reload()} />}
+          {tab === "billing" && <ClientBilling accountId={a.id} client={a.name} />}
           {tab === "activities" && <ActivitiesTab target={{ accountId: a.id }} activities={data.activities} onChanged={() => void reload()} showProperty />}
         </div>
       </section>
