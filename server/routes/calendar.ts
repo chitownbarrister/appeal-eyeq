@@ -77,21 +77,25 @@ calendarRouter.get("/calendar", async (req, res) => {
       [firmId, from, to, me],
     )).rows;
 
-    const tasks = (await c.query(
-      `SELECT ac.id, ac.property_id, ac.account_id, ac.subject, ac.due_on, ac.status, u.name AS assigned_name,
-              p.name, p.address1, p.city, t.name AS township, acc.name AS account_name,
+    // Tasks and calendar entries (meetings, calls, reminders). Someone else's private entry never leaves the database.
+    const entries = (await c.query(
+      `SELECT ac.id, ac.kind, ac.property_id, ac.account_id, ac.appeal_id, ac.subject, ac.body, ac.due_on, ac.start_time, ac.end_time, ac.location,
+              ac.is_private, ac.status, ac.assigned_user_id, u.name AS assigned_name, (ac.created_by_user_id = $4) AS created_by_me,
+              p.name, p.address1, p.city, t.name AS township, acc.name AS account_name, a.assessment_year, a.level,
               (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin,
-              (ac.assigned_user_id = $4) AS mine
+              (ac.assigned_user_id = $4 OR (ac.assigned_user_id IS NULL AND ac.created_by_user_id = $4)) AS mine
          FROM activities ac
          LEFT JOIN users u ON u.firm_id = ac.firm_id AND u.id = ac.assigned_user_id
          LEFT JOIN properties p ON p.firm_id = ac.firm_id AND p.id = ac.property_id
          LEFT JOIN townships t ON t.id = p.township_id
          LEFT JOIN accounts acc ON acc.firm_id = ac.firm_id AND acc.id = COALESCE(ac.account_id, p.account_id)
-        WHERE ac.firm_id = $1 AND ac.kind = 'task' AND ac.due_on BETWEEN $2 AND $3
-        ORDER BY ac.due_on`,
+         LEFT JOIN appeals a ON a.firm_id = ac.firm_id AND a.id = ac.appeal_id
+        WHERE ac.firm_id = $1 AND ac.kind IN ('task', 'meeting', 'call', 'reminder') AND ac.due_on BETWEEN $2 AND $3
+          AND (NOT ac.is_private OR ac.created_by_user_id = $4)
+        ORDER BY ac.due_on, ac.start_time NULLS FIRST`,
       [firmId, from, to, me],
     )).rows;
-    return { windows, deadlines, tasks };
+    return { windows, deadlines, entries };
   });
 
   const title = (r: { pin: string | null; address1: string | null; name: string | null; city: string | null; township: string | null }) =>
@@ -100,7 +104,7 @@ calendarRouter.get("/calendar", async (req, res) => {
     today: todayIso(),
     windows: data.windows.map((w) => ({ ...w, label: `${w.township ?? `${w.county} County`} ${LEVEL_SHORT[w.level as keyof typeof LEVEL_SHORT]}`, mine: w.mine > 0 })),
     deadlines: data.deadlines.map(({ pin, name, address1, city, township, ...d }) => ({ ...d, property_title: title({ pin, name, address1, city, township }), property_short: address1 || name })),
-    tasks: data.tasks.map(({ pin, name, address1, city, township, ...t }) => ({ ...t, property_title: title({ pin, name, address1, city, township }), property_short: address1 || name })),
+    entries: data.entries.map(({ pin, name, address1, city, township, ...t }) => ({ ...t, property_title: title({ pin, name, address1, city, township }), property_short: address1 || name })),
   });
 });
 

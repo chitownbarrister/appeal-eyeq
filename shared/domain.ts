@@ -129,3 +129,33 @@ export function pinKey(pin: string): string {
   const digits = pin.replace(/\D/g, "");
   return digits.length === 14 && digits.endsWith("0000") ? digits.slice(0, 10) : digits;
 }
+
+// ---------------------------------------------------------------- asset types
+/** One field with a pecking order: the three main types, then the specialty types, each rolling up to a main type. */
+export const MAIN_ASSET_TYPES = ["residential", "commercial", "industrial"] as const;
+export type AssetGroup = (typeof MAIN_ASSET_TYPES)[number];
+export const SPECIALTY_ASSET_TYPES = ["medical", "retail", "hospitality", "multifamily", "flex", "data_center"] as const;
+export const ASSET_TYPES = [...MAIN_ASSET_TYPES, ...SPECIALTY_ASSET_TYPES] as const;
+export type AssetType = (typeof ASSET_TYPES)[number];
+export const ASSET_TYPE_LABELS: Record<AssetType, string> = {
+  residential: "Residential", commercial: "Commercial", industrial: "Industrial",
+  medical: "Medical", retail: "Retail", hospitality: "Hospitality", multifamily: "Multi-family", flex: "Flex", data_center: "Data Center",
+};
+/** Where each specialty type rolls up. Multi-family depends on its unit count (county rule) or an override. */
+export const ASSET_ROLLUP: Record<Exclude<AssetType, "multifamily">, AssetGroup> = {
+  residential: "residential", commercial: "commercial", industrial: "industrial",
+  medical: "commercial", retail: "commercial", hospitality: "commercial", flex: "industrial", data_center: "industrial",
+};
+
+export function assetGroup(type: AssetType, units: number | null, maxResidentialUnits: number | null, override: AssetGroup | null): AssetGroup {
+  if (type !== "multifamily") return ASSET_ROLLUP[type];
+  if (override) return override;
+  return units !== null && units > (maxResidentialUnits ?? 6) ? "commercial" : "residential";
+}
+
+/** "Retail · Commercial", or just "Commercial" for a main type. */
+export function assetTypeText(type: string, group?: string | null): string {
+  const label = ASSET_TYPE_LABELS[type as AssetType] ?? type;
+  if (!group || group === type) return label;
+  return `${label} · ${ASSET_TYPE_LABELS[group as AssetType] ?? group}`;
+}

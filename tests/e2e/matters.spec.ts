@@ -117,7 +117,7 @@ test("clients list and client page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Clients", level: 1 })).toBeVisible();
   await page.getByRole("link", { name: "Prairie Crossing Industrial LLC" }).click();
   await expect(page.getByText("Custom: 30% at all levels")).toBeHidden();
-  await expect(page.locator(".kpis")).toContainText("30.00%");
+  await expect(page.locator(".kpis")).toContainText("Assessor/BOR 30%·PTAB/Court 30%");
   await expect(page.getByRole("link", { name: /2400 Channahon Rd\./ })).toBeVisible();
   await expect(page.getByRole("link", { name: /2550 Channahon Rd\./ })).toBeVisible();
   await page.screenshot({ path: "test-results/client.png", fullPage: true });

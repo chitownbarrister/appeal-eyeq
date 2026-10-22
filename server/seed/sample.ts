@@ -65,6 +65,20 @@ function levelOfAssessment(county: string, assetType: string, csvValue: string):
   return "33.33";
 }
 
+/** The sample's Asset type and Use columns as one asset type (with units for multi-family). */
+function sampleAssetType(type: string, use: string): { assetType: string; units: number | null } {
+  const u = use.toLowerCase();
+  const units = /\((\d+) units?\)/.exec(u);
+  if (u.startsWith("multifamily")) return { assetType: "multifamily", units: units ? Number(units[1]) : null };
+  if (u.includes("data center")) return { assetType: "data_center", units: null };
+  if (u.includes("medical")) return { assetType: "medical", units: null };
+  if (u.startsWith("retail")) return { assetType: "retail", units: null };
+  return { assetType: type.toLowerCase(), units: null };
+}
+
+/** Class codes on a few sample PINs, so the level of assessment shows where it comes from. */
+const SAMPLE_CLASS: Record<string, string> = { "11-19-207-011-0000": "3-15", "17-08-101-022-0000": "5-17" };
+
 function substageForStatus(status: AppealStatus): Substage {
   return status === "waiting_decision" ? "appeal_filed" : "closed";
 }
@@ -344,24 +358,24 @@ async function seedProperties(
     const { rows } = await c.query<{ id: number }>(
       `INSERT INTO properties (firm_id, account_id, name, status, asset_type, use_type, address1, city, state, county_id, township_id,
                                tax_code, tax_code_confirmed, level_of_assessment, attorney_user_id, analyst_user_id, no_fee,
-                               year_built, building_sqft, purchase_date, purchase_price, acreage, zip)
-       VALUES ($1, $2, $3, 'active', $4, $5, $3, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                               year_built, building_sqft, purchase_date, purchase_price, acreage, zip, units)
+       VALUES ($1, $2, $3, 'active', $4, $5, $3, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING id`,
       [
-        firmId, accountIds[r.Client], r.Address, r["Asset type"].toLowerCase(), r.Use, r.City, r.State,
+        firmId, accountIds[r.Client], r.Address, sampleAssetType(r["Asset type"], r.Use).assetType, r.Use, r.City, r.State,
         geo.rows[0].county_id, geo.rows[0].township_id,
         is1044 ? "23008" : null, is1044,
         levelOfAssessment(r.County, r["Asset type"], r["Level of assessment %"]),
         userIds[r.Attorney], userIds[r.Analyst], r["No fee"] === "Yes",
         blankToNull(r["Year built"]), blankToNull(r["Building sq ft"]),
         is1044 ? "2022-10-06" : null, is1044 ? "628000.00" : null, is1044 ? "0.1722" : null,
-        is1044 ? "60093" : null,
+        is1044 ? "60093" : null, sampleAssetType(r["Asset type"], r.Use).units,
       ],
     );
     await c.query(
       `INSERT INTO parcels (firm_id, property_id, pin, alternate_pin, parcel_type, class, address, city, state, is_primary)
-       VALUES ($1, $2, $3, $3, 'real', NULL, $4, $5, $6, true)`,
-      [firmId, rows[0].id, r.PIN, r.Address.toUpperCase(), r.City.toUpperCase(), r.State],
+       VALUES ($1, $2, $3, $3, 'real', $7, $4, $5, $6, true)`,
+      [firmId, rows[0].id, r.PIN, r.Address.toUpperCase(), r.City.toUpperCase(), r.State, SAMPLE_CLASS[r.PIN] ?? null],
     );
     if (is1044) {
       await c.query(

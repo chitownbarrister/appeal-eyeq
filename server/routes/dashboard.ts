@@ -50,7 +50,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
     // The current appeal of every active property.
     const cur = (await c.query<Cur>(
       `SELECT DISTINCT ON (p.id) p.id AS property_id, p.address1, p.name, p.city, co.name AS county, p.county_id,
-              t.name AS township, p.township_id, t.triad, p.asset_type, p.analyst_user_id, ana.name AS analyst_name, ac.name AS account_name,
+              t.name AS township, p.township_id, t.triad, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_type, p.analyst_user_id, ana.name AS analyst_name, ac.name AS account_name,
               a.id AS appeal_id, a.level, a.substage, a.status, a.assessment_year, a.estimated_savings,
               GREATEST(0, EXTRACT(day FROM now() - a.substage_since))::int AS days
          FROM properties p
@@ -64,7 +64,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
       [firmId],
     )).rows;
     const activeProps = (await c.query<{ id: number; asset_type: string; county: string; county_id: number; township: string | null; township_id: number | null; triad: string | null }>(
-      `SELECT p.id, p.asset_type, co.name AS county, p.county_id, t.name AS township, p.township_id, t.triad
+      `SELECT p.id, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_type, co.name AS county, p.county_id, t.name AS township, p.township_id, t.triad
          FROM properties p JOIN counties co ON co.id = p.county_id LEFT JOIN townships t ON t.id = p.township_id
         WHERE p.firm_id = $1 AND p.status = 'active'`,
       [firmId],
@@ -76,7 +76,7 @@ dashboardRouter.get("/dashboard", async (req, res) => {
       [cycle - 1],
     )).rows;
     const decided = (await c.query<{ level: Level; status: string; orig_av: string | null; resolved_av: string | null; asset_type: string; township: string | null; analyst_name: string | null }>(
-      `SELECT a.level, a.status, a.orig_av, a.resolved_av, p.asset_type, t.name AS township, ana.name AS analyst_name
+      `SELECT a.level, a.status, a.orig_av, a.resolved_av, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_type, t.name AS township, ana.name AS analyst_name
          FROM appeals a JOIN properties p ON p.firm_id = a.firm_id AND p.id = a.property_id
          LEFT JOIN townships t ON t.id = p.township_id
          LEFT JOIN users ana ON ana.firm_id = p.firm_id AND ana.id = p.analyst_user_id

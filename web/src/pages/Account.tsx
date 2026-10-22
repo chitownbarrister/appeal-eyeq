@@ -6,13 +6,15 @@ import { formatMoney, titleCase } from "../format";
 import { MatterName } from "../components/MatterName";
 import { LEVEL_LABELS, SUBSTAGE_LABELS, type Level, type Substage } from "../../../shared/domain";
 import type { EffectiveFee } from "../../../shared/fees";
+import { assetTypeText } from "../../../shared/domain";
+import { FeeFigures } from "../components/FeeFigures";
 import { AccountSheet, PropertySheet, type AccountRecord } from "../components/forms";
 import { ActivitiesTab, ContactsTab } from "./Property";
 import { ClientBilling } from "../components/BillingSheets";
 
 interface AccountDetail {
   account: AccountRecord & { rep_name: string | null };
-  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; level: Level | null; substage: Substage | null }[];
+  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; asset_group: string; level: Level | null; substage: Substage | null }[];
   savings: { assessment_year: number; savings: string }[];
   activeAppeals: number;
   contacts: Parameters<typeof ContactsTab>[0]["contacts"];
@@ -66,9 +68,8 @@ export function Account() {
           <div className="card kpi">
             <span className="label">Fee terms</span>
             <span className="value" style={{ fontSize: 15, fontFamily: "var(--f-body)", fontWeight: 500 }}>
-              {a.no_fee ? "No fee" : a.fee_type === "flat" ? `Flat ${a.flat_fee ? formatMoney(a.flat_fee) : ""}` : `${feeLine(data.fees.firstYear)} / ${feeLine(data.fees.refund)}`}
+              <FeeFigures firstYear={data.fees.firstYear} refund={data.fees.refund} noFee={a.no_fee} flat={a.fee_type === "flat" ? a.flat_fee : null} cap={a.fee_cap} />
             </span>
-            <span className="note">Assessor and BOR / PTAB and Court</span>
           </div>
         </div>
         <div className="subtabs" role="tablist">
@@ -93,7 +94,7 @@ export function Account() {
                         <td><MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} /></td>
                         <td>{p.county}</td><td>{p.township}</td>
                         <td><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></td>
-                        <td>{titleCase(p.asset_type)}</td>
+                        <td>{assetTypeText(p.asset_type, p.asset_group)}</td>
                         <td>{p.level ? `${LEVEL_LABELS[p.level]} · ${p.substage ? SUBSTAGE_LABELS[p.substage] : ""}` : "No appeal yet"}</td>
                       </tr>
                     ))}

@@ -12,6 +12,7 @@ interface Bill {
   items: { number: string; matter: string; issuedOn: string; total: string }[];
   payment: { status: string; method: string; amount: string; at: string } | null;
   online: boolean;
+  attachments?: { id: number; name: string; size: number }[];
 }
 
 export function Pay({ token }: { token: string }) {
@@ -120,6 +121,12 @@ export function Pay({ token }: { token: string }) {
 
             <footer className="pay-foot">
               <a className="lk" href={`/api/pay/${encodeURIComponent(token)}/pdf`} target="_blank" rel="noreferrer">Download the {what.toLowerCase()} (PDF)</a>
+              {(bill.attachments ?? []).length > 0 && (
+                <div className="pay-atts">
+                  <span className="meta">Sent with it:</span>
+                  {bill.attachments!.map((a) => <a key={a.id} className="lk" href={`/api/pay/${encodeURIComponent(token)}/attachments/${a.id}`} target="_blank" rel="noreferrer">{a.name}</a>)}
+                </div>
+              )}
               <span className="meta">Payments are processed by Stripe. Card and bank details never reach {bill.firm.name} or Appeal EyeQ.</span>
             </footer>
           </>

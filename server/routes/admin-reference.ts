@@ -249,6 +249,73 @@ adminReferenceRouter.post("/townships", async (req, res) => {
   res.status(201).json({ id: row.id });
 });
 
+// ---------------------------------------------------------------- assessment rules
+// Where Multi-family groups (by unit count) and the level of assessment by class code.
+// Firms read these live, so a change here applies to every firm at once. Appeals already
+// created keep the level they were created with.
+const RuleBody = z.object({ multifamilyMaxUnits: z.coerce.number().int().min(1, "Use at least 1 unit").max(10000) }).strict();
+
+adminReferenceRouter.put("/county-rules/:id", async (req, res) => {
+  const countyId = idParam(req);
+  const parsed = RuleBody.safeParse(req.body);
+  if (!countyId) return bad(res, "Invalid county.");
+  if (!parsed.success) return bad(res, zodMessage(parsed.error));
+  await withContext(adminCtx(req), async (c) => {
+    await checkTownship(c, countyId, null);
+    await c.query(
+      `INSERT INTO county_rules (county_id, multifamily_residential_max_units, updated_by_user_id, updated_at) VALUES ($1, $2, $3, now())
+       ON CONFLICT (county_id) DO UPDATE SET multifamily_residential_max_units = EXCLUDED.multifamily_residential_max_units,
+         updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()
+       WHERE county_rules.multifamily_residential_max_units IS DISTINCT FROM EXCLUDED.multifamily_residential_max_units`,
+      [countyId, parsed.data.multifamilyMaxUnits, req.auth!.user.id],
+    );
+  });
+  res.json({ ok: true });
+});
+
+const classPrefix = z.string().trim().toUpperCase().transform((v) => v.replace(/[^0-9A-Z]/g, "")).pipe(z.string().max(4, "A class prefix is up to 4 letters or digits"));
+const levelPct = z.union([z.string(), z.number()]).transform(String).pipe(z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, "Level: a percent with up to 2 decimals")).refine((v) => Number(v) > 0 && Number(v) <= 100, "Level must be above 0 and at most 100");
+const ClassLevelBody = z.object({ countyId: id, classPrefix, levelPercent: levelPct, label: z.string().trim().min(1, "Describe the class").max(120) }).strict();
+
+adminReferenceRouter.post("/class-levels", async (req, res) => {
+  const parsed = ClassLevelBody.safeParse(req.body);
+  if (!parsed.success) return bad(res, zodMessage(parsed.error));
+  const d = parsed.data;
+  const row = await withContext(adminCtx(req), async (c) => {
+    await checkTownship(c, d.countyId, null);
+    const clash = await c.query(`SELECT 1 FROM class_assessment_levels WHERE county_id = $1 AND class_prefix = $2`, [d.countyId, d.classPrefix]);
+    if (clash.rowCount) throw Object.assign(new Error("dupe"), { status: 409, publicMessage: "That county already has a level for this class. Edit it instead." });
+    return (await c.query(
+      `INSERT INTO class_assessment_levels (county_id, class_prefix, level_percent, label, updated_by_user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [d.countyId, d.classPrefix, d.levelPercent, d.label, req.auth!.user.id],
+    )).rows[0];
+  });
+  res.status(201).json({ id: row.id });
+});
+
+adminReferenceRouter.patch("/class-levels/:id", async (req, res) => {
+  const rid = idParam(req);
+  const parsed = ClassLevelBody.omit({ countyId: true, classPrefix: true }).partial().strict().safeParse(req.body);
+  if (!rid) return bad(res, "Invalid row.");
+  if (!parsed.success) return bad(res, zodMessage(parsed.error));
+  const d = parsed.data;
+  const r = await withContext(adminCtx(req), (c) => c.query(
+    `UPDATE class_assessment_levels SET level_percent = COALESCE($2, level_percent), label = COALESCE($3, label), updated_by_user_id = $4, updated_at = now()
+      WHERE id = $1`,
+    [rid, d.levelPercent ?? null, d.label ?? null, req.auth!.user.id],
+  ));
+  if (!r.rowCount) { res.status(404).json({ error: "Not found." }); return; }
+  res.json({ ok: true });
+});
+
+adminReferenceRouter.delete("/class-levels/:id", async (req, res) => {
+  const rid = idParam(req);
+  if (!rid) return bad(res, "Invalid row.");
+  const r = await withContext(adminCtx(req), (c) => c.query(`DELETE FROM class_assessment_levels WHERE id = $1`, [rid]));
+  if (!r.rowCount) { res.status(404).json({ error: "Not found." }); return; }
+  res.json({ ok: true });
+});
+
 // ---------------------------------------------------------------- CSV import
 // Upload a whole year at once. Every row is checked first; if any row is
 // wrong nothing is saved and the errors come back with their row numbers.

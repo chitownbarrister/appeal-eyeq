@@ -24,7 +24,10 @@ type C = pg.PoolClient;
 const err = (status: number, publicMessage: string) => Object.assign(new Error(publicMessage), { status, publicMessage });
 
 // ---------------------------------------------------------------- settings and numbers
-export interface BillingSettings { invoice_prefix: string; payment_terms_days: number; invoice_note: string | null; reply_to_email: string | null }
+export interface BillingSettings {
+  invoice_prefix: string; payment_terms_days: number; invoice_note: string | null; reply_to_email: string | null;
+  accent_color: string | null; remit_to: string | null;
+}
 
 export function initialsOf(name: string): string {
   const i = name.split(/[^A-Za-z]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("").slice(0, 4);
@@ -33,13 +36,13 @@ export function initialsOf(name: string): string {
 
 /** The firm's billing settings, created with its initials as the prefix the first time they're needed. */
 export async function billingSettings(c: C, firmId: number): Promise<BillingSettings> {
-  const row = (await c.query<BillingSettings>(`SELECT invoice_prefix, payment_terms_days, invoice_note, reply_to_email FROM billing_settings WHERE firm_id = $1`, [firmId])).rows[0];
+  const row = (await c.query<BillingSettings>(`SELECT invoice_prefix, payment_terms_days, invoice_note, reply_to_email, accent_color, remit_to FROM billing_settings WHERE firm_id = $1`, [firmId])).rows[0];
   if (row) return row;
   const firm = (await c.query<{ name: string }>(`SELECT name FROM firms WHERE id = $1`, [firmId])).rows[0];
   return (await c.query<BillingSettings>(
     `INSERT INTO billing_settings (firm_id, invoice_prefix) VALUES ($1, $2)
      ON CONFLICT (firm_id) DO UPDATE SET firm_id = EXCLUDED.firm_id
-     RETURNING invoice_prefix, payment_terms_days, invoice_note, reply_to_email`,
+     RETURNING invoice_prefix, payment_terms_days, invoice_note, reply_to_email, accent_color, remit_to`,
     [firmId, initialsOf(firm?.name ?? "")],
   )).rows[0];
 }

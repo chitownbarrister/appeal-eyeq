@@ -731,3 +731,75 @@ table.letters td.why { max-width: 340px; font-size: 12.5px; }
 .pay-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .pay-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
 @media (max-width: 560px) { .pay-card { padding: 22px 18px; } .pay-wrap { padding: 16px; } .pay-buttons .btn { flex: 1; } }
+
+/* ---------------- fee figures (Delivery 10a) */
+.fee-figs { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.fee-figs .ff { white-space: nowrap; color: var(--muted); }
+.fee-figs .ff b { color: var(--navy); font-weight: 600; margin-left: 3px; }
+.fee-figs .sep, dd .sep { color: var(--faint); }
+
+/* ---------------- calendar views and entries (Delivery 10a) */
+.dot.meeting { background: #35589a; }
+.dot.call { background: #6b4fa0; }
+.dot.reminder { background: var(--sand); }
+button.ev { border: 0; background: none; padding: 0; width: 100%; text-align: left; cursor: pointer; font: inherit; }
+button.ev:hover span.t { text-decoration: underline; }
+.cal-day button.n { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; font-size: 12px; }
+.cal-day button.n:hover { background: var(--copper-wash); }
+.cal-day.today button.n:hover { background: var(--navy); }
+.cal-views { flex-wrap: wrap; }
+.tg { display: grid; }
+.tg-head, .tg-all, .tg-body { display: grid; grid-template-columns: var(--hw, 56px) repeat(var(--days, 7), minmax(0, 1fr)); }
+.tg-head { border-bottom: 1px solid var(--line); }
+.tg-dh { font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 8px 6px; text-align: left; border: 0; background: none; font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.tg-dh { cursor: pointer; }
+button.tg-dh:hover { color: var(--navy); text-decoration: underline; }
+.tg-dh.today { color: var(--navy); background: var(--copper-wash); }
+.tg-all { border-bottom: 1px solid var(--line); min-height: 34px; }
+.tg-all > div { border-left: 1px solid var(--line-2); padding: 4px; min-width: 0; }
+.tg-all ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; grid-template-columns: minmax(0, 1fr); }
+.tg-l { font-size: 10.5px; color: var(--faint); padding: 8px 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+.tg-body { max-height: 640px; overflow-y: auto; }
+.tg-hours span { display: block; font-size: 10.5px; color: var(--faint); text-align: right; padding: 0 6px; border-top: 1px solid var(--line-2); box-sizing: border-box; }
+.tg-col { position: relative; border-left: 1px solid var(--line-2); min-width: 0; background-image: repeating-linear-gradient(to bottom, var(--line-2) 0, var(--line-2) 1px, transparent 1px, transparent 44px); }
+.tg-col.today { background-color: color-mix(in oklab, var(--copper-wash), white 50%); }
+.tg-slot { position: absolute; left: 0; right: 0; border: 0; background: none; padding: 0; cursor: copy; }
+.tg-slot:hover { background: rgba(10, 31, 68, 0.03); }
+.tg-ev { position: absolute; border-radius: var(--r); padding: 2px 5px; font-size: 11px; line-height: 1.25; overflow: hidden; background: var(--net-wash); border-left: 3px solid var(--slate); box-sizing: border-box; }
+.tg-ev a, .tg-ev button, .tg-ev span { color: var(--navy); text-decoration: none; border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; display: block; width: 100%; }
+.tg-ev b { font-weight: 600; }
+.tg-ev.hearing { border-left-color: var(--navy); }
+.tg-ev.meeting { border-left-color: #35589a; background: #e9eef7; }
+.tg-ev.call { border-left-color: #6b4fa0; background: #efeaf6; }
+.tg-ev.reminder { border-left-color: var(--sand); background: var(--copper-wash); }
+.tg-ev.task { border-left-color: var(--ok); background: var(--ok-wash); }
+.tg-ev.done { opacity: 0.55; }
+.cal-year { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 18px 22px; padding: 18px; }
+.ym .ymh { border: 0; background: none; padding: 0 0 6px; font: 600 13px var(--f-body); color: var(--navy); cursor: pointer; display: flex; justify-content: space-between; width: 100%; }
+.ym .ymh small { font-weight: 400; color: var(--faint); font-size: 11px; }
+.ymg { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.ymg .yd { font-size: 9.5px; color: var(--faint); text-align: center; }
+.ymg .yc { border: 0; background: none; padding: 3px 0; font-size: 11px; color: var(--muted); border-radius: 50%; cursor: pointer; font-variant-numeric: tabular-nums; }
+.ymg .yc.has { color: var(--navy); font-weight: 700; background: var(--copper-wash); }
+.ymg .yc.today { background: var(--navy); color: #fff; }
+.ymg .yc:hover { outline: 1px solid var(--copper-line); }
+@media (max-width: 760px) {
+  .tg-dh { font-size: 10px; padding: 6px 2px; }
+  .tg-ev { font-size: 0; padding: 0; }
+  .tg-hours span { font-size: 9px; padding: 0 2px; }
+  .tg { --hw: 34px; }
+}
+
+/* ---------------- invoice design (Delivery 10a) */
+.fld .lbl { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); margin-bottom: 4px; }
+.logo-thumb { max-height: 48px; max-width: 220px; border: 1px solid var(--line); border-radius: var(--r); background: #fff; padding: 4px; }
+.inv-preview { margin-top: 16px; display: grid; gap: 8px; }
+.inv-preview .pv-frame { height: min(80vh, 860px); }
+.att-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.att-list li { display: flex; gap: 10px; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: var(--r); padding: 6px 10px; font-size: 13px; }
+.att-list li .mn { white-space: nowrap; }
+.att-pick { max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r); margin-top: 8px; }
+.att-pick button { display: flex; width: 100%; justify-content: space-between; gap: 10px; border: 0; border-bottom: 1px solid var(--line-2); background: var(--card); padding: 8px 10px; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+.att-pick button:hover { background: var(--hover); }
+.att-pick button:disabled { color: var(--faint); cursor: default; }
+.pay-atts { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }

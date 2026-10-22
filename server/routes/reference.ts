@@ -9,9 +9,22 @@ export const referenceRouter = Router();
 referenceRouter.use(requireAuth);
 
 referenceRouter.get("/counties", async (_req, res) => {
-  const counties = (await query(`SELECT id, state, name FROM counties ORDER BY state, name`)).rows;
+  const counties = (await query(
+    `SELECT c.id, c.state, c.name, COALESCE(r.multifamily_residential_max_units, 6) AS multifamily_max_units
+       FROM counties c LEFT JOIN county_rules r ON r.county_id = c.id ORDER BY c.state, c.name`,
+  )).rows;
   const townships = (await query(`SELECT id, county_id, name, triad FROM townships ORDER BY name`)).rows;
   res.json({ counties, townships });
+});
+
+/** Level of assessment by class code, per county (the longest matching prefix wins; blank covers every class). */
+referenceRouter.get("/class-levels", async (_req, res) => {
+  const { rows } = await query(
+    `SELECT l.id, l.county_id, c.name AS county, l.class_prefix, l.level_percent, l.label, l.updated_at
+       FROM class_assessment_levels l JOIN counties c ON c.id = l.county_id
+      ORDER BY c.name, l.class_prefix`,
+  );
+  res.json({ classLevels: rows });
 });
 
 referenceRouter.get("/windows", async (req, res) => {

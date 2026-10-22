@@ -22,6 +22,73 @@ interface InvoiceDetail extends InvoiceRow {
   note: string | null; sentTo: string[] | null; voidReason: string | null; lines: { id: number; kind: "fee" | "other"; description: string; amount: string }[];
   payments: Payment[]; emails: { to_addresses: string[]; status: string; error: string | null; created_at: string }[];
   payable: boolean; blockedReason: string | null; savedMethod: string | null; suggestedTo: string[]; hasLink: boolean; today: string;
+  attachments: Attachment[];
+}
+interface Attachment { id: number; name: string; size: number }
+interface Attachable { id: number; name: string; size: number | null; type_name: string | null; assessment_year: number | null; level: string | null; attached: boolean }
+
+const fileSize = (n: number | null) => (n === null ? "" : n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** PDFs from the property's Files tab attached to this invoice: shown here, emailed with it, and on the client's pay page. */
+function Attachments({ invoiceId, status, list, canEdit, onChanged }: { invoiceId: number; status: string; list: Attachment[]; canEdit: boolean; onChanged: (list: Attachment[]) => void }) {
+  const { me } = useSession();
+  const [picking, setPicking] = useState<Attachable[] | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const editable = canEdit && (status === "draft" || status === "sent") && !me.user.isSuperAdmin;
+  if (!list.length && !editable) return null;
+  async function pick() {
+    setError("");
+    try { setPicking((await api<{ files: Attachable[] }>(`/firm/billing/invoices/${invoiceId}/attachable`)).files); } catch (e) { setError(errorText(e)); }
+  }
+  async function attach(f: Attachable) {
+    setBusy(f.id); setError("");
+    try {
+      const r = await api<{ attachments: Attachment[] }>(`/firm/billing/invoices/${invoiceId}/attachments`, { method: "POST", body: { documentId: f.id } });
+      onChanged(r.attachments);
+      setPicking(null);
+    } catch (e) { setError(errorText(e)); } finally { setBusy(null); }
+  }
+  async function detach(a: Attachment) {
+    setBusy(-a.id); setError("");
+    try { onChanged((await api<{ attachments: Attachment[] }>(`/firm/billing/invoices/${invoiceId}/attachments/${a.id}`, { method: "DELETE" })).attachments); } catch (e) { setError(errorText(e)); } finally { setBusy(null); }
+  }
+  const total = list.reduce((a, x) => a + x.size, 0);
+  return (
+    <div className="blk" style={{ marginTop: 14 }}>
+      <h5>Attachments</h5>
+      {list.length > 0 ? (
+        <ul className="att-list">
+          {list.map((a) => (
+            <li key={a.id}>
+              {me.user.isSuperAdmin ? <span>{a.name}</span> : <a href={`/api/firm/billing/invoices/${invoiceId}/attachments/${a.id}`} target="_blank" rel="noreferrer">{a.name}</a>}
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="mn">{fileSize(a.size)}</span>
+                {editable && <button type="button" className="btn small ghost" disabled={busy !== null} onClick={() => void detach(a)} aria-label={`Remove ${a.name}`}>Remove</button>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="meta" style={{ margin: 0 }}>Nothing attached. Add the decision letter or a reduction summary so the client has it with the bill.</p>}
+      {list.length > 0 && <p className="meta">Emailed with the invoice and downloadable from the client's pay page. {fileSize(total)} of 9 MB.</p>}
+      {editable && !picking && <button type="button" className="lk" onClick={() => void pick()}>+ Attach a PDF from the property's files</button>}
+      {picking && (
+        <>
+          <div className="att-pick" role="list" aria-label="PDFs on this property">
+            {picking.length === 0 && <p className="meta" style={{ padding: 10, margin: 0 }}>No PDFs on this property's Files tab yet. Upload one there first.</p>}
+            {picking.map((f) => (
+              <button key={f.id} type="button" role="listitem" disabled={f.attached || busy !== null} onClick={() => void attach(f)}>
+                <span>{f.name}{f.type_name ? <span className="mn"> · {f.type_name}</span> : null}</span>
+                <span className="mn">{f.attached ? "Attached" : busy === f.id ? "Attaching" : fileSize(f.size)}</span>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="lk" onClick={() => setPicking(null)}>Cancel</button>
+        </>
+      )}
+      {error && <div className="error" role="alert">{error}</div>}
+    </div>
+  );
 }
 interface StatementDetail extends StatementRow { invoiceList: InvoiceRow[]; payments: Payment[]; payable: boolean; blockedReason: string | null; savedMethod: string | null; today: string }
 
@@ -276,12 +343,14 @@ export function InvoiceSheet({ invoiceId, emailOn, onClose, onChanged }: { invoi
         <div className="fld" style={{ marginTop: 10 }}><label htmlFor="inv-note">Note on the invoice</label><textarea id="inv-note" className="in" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
       ) : d.note && <p className="muted">{d.note}</p>}
 
+      <Attachments invoiceId={d.id} status={d.status} list={d.attachments ?? []} canEdit={canSend} onChanged={(list) => { setD({ ...d, attachments: list }); onChanged(); }} />
+
       {canSend && (d.status === "draft" || (d.status === "sent" && !d.statement)) && (
         <div className="blk" style={{ marginTop: 14 }}>
           <h5>{d.status === "draft" ? "Send" : "Send again"}</h5>
           <div className="fld"><label htmlFor="inv-to">To</label><input id="inv-to" className="in" value={to} onChange={(e) => setTo(e.target.value)} placeholder="billing@client.com" /></div>
           {!d.suggestedTo.length && <p className="meta">No billing email on file. Add a Billing contact on the client, or type an address.</p>}
-          <label className="check" style={{ margin: "8px 0" }}><input type="checkbox" checked={useEmail} onChange={(e) => setUseEmail(e.target.checked)} /> Email it with the PDF attached</label>
+          <label className="check" style={{ margin: "8px 0" }}><input type="checkbox" checked={useEmail} onChange={(e) => setUseEmail(e.target.checked)} /> Email it with the PDF{d.attachments?.length ? ` and ${d.attachments.length} attachment${d.attachments.length === 1 ? "" : "s"}` : ""} attached</label>
           {!emailOn && useEmail && <p className="meta">Email isn't set up on this server yet, so the invoice will be marked sent and you can copy its pay link.</p>}
           <button type="button" className="btn copper" disabled={!!busy || dirty} onClick={() => void send()}>
             {busy === "send" ? "Sending" : d.status === "draft" ? (useEmail ? "Send invoice" : "Mark sent") : "Send again"}

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText } from "./api";
 
 export interface FirmUser { id: number; name: string; email: string; role: "attorney" | "analyst" | "operations"; is_firm_admin: boolean; active: boolean }
-export interface County { id: number; state: string; name: string }
+export interface County { id: number; state: string; name: string; multifamily_max_units?: number }
 export interface Township { id: number; county_id: number; name: string; triad: string | null }
 
 let usersCache: Promise<FirmUser[]> | null = null;

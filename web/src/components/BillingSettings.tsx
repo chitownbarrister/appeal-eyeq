@@ -2,14 +2,15 @@
 // the firm, the firm pays Stripe's fees), whether email is set up, invoice numbering,
 // payment terms, the note printed on invoices, and the letterhead.
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, errorText } from "../api";
 import { useSession } from "../App";
 import { todayIso } from "../format";
 
 interface S {
-  settings: { invoice_prefix: string; payment_terms_days: number; invoice_note: string | null; reply_to_email: string | null };
+  settings: { invoice_prefix: string; payment_terms_days: number; invoice_note: string | null; reply_to_email: string | null; accent_color: string | null; remit_to: string | null };
+  logo: { width: number; height: number; updated_at: string } | null;
   letterhead: { letterhead_name: string | null; letterhead_address: string | null; letterhead_phone: string | null; letterhead_website: string | null };
   stripe: { stripe_account_id: string; charges_enabled: boolean; payouts_enabled: boolean; details_submitted: boolean; business_name: string | null; livemode: boolean } | null;
   stripeAvailable: boolean; emailAvailable: boolean;
@@ -20,7 +21,9 @@ export function BillingSettingsTab() {
   const isAdmin = !me.user.isSuperAdmin && me.user.isFirmAdmin;
   const [params, setParams] = useSearchParams();
   const [s, setS] = useState<S | null>(null);
-  const [f, setF] = useState({ invoicePrefix: "", paymentTermsDays: "30", invoiceNote: "", replyToEmail: "", letterheadName: "", letterheadAddress: "", letterheadPhone: "", letterheadWebsite: "" });
+  const [f, setF] = useState({ invoicePrefix: "", paymentTermsDays: "30", invoiceNote: "", replyToEmail: "", letterheadName: "", letterheadAddress: "", letterheadPhone: "", letterheadWebsite: "", accentColor: "", remitTo: "" });
+  const [logoMsg, setLogoMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [previewSrc, setPreviewSrc] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -34,6 +37,7 @@ export function BillingSettingsTab() {
     setF({
       invoicePrefix: r.settings.invoice_prefix, paymentTermsDays: String(r.settings.payment_terms_days), invoiceNote: r.settings.invoice_note ?? "", replyToEmail: r.settings.reply_to_email ?? "",
       letterheadName: r.letterhead.letterhead_name ?? "", letterheadAddress: r.letterhead.letterhead_address ?? "", letterheadPhone: r.letterhead.letterhead_phone ?? "", letterheadWebsite: r.letterhead.letterhead_website ?? "",
+      accentColor: r.settings.accent_color ?? "", remitTo: r.settings.remit_to ?? "",
     });
   }, []);
   useEffect(() => { void load().catch((e) => setError(errorText(e))); }, [load]);
@@ -52,10 +56,47 @@ export function BillingSettingsTab() {
     e.preventDefault();
     setBusy("save"); setFormMsg(null);
     try {
-      await api("/firm/billing/settings", { method: "PUT", body: { ...f, paymentTermsDays: Number(f.paymentTermsDays) } });
+      await api("/firm/billing/settings", { method: "PUT", body: { ...f, paymentTermsDays: Number(f.paymentTermsDays), accentColor: f.accentColor.trim().toUpperCase() } });
       await load();
       setFormMsg({ ok: true, text: "Billing settings saved." });
     } catch (err) { setFormMsg({ ok: false, text: errorText(err) }); } finally { setBusy(""); }
+  }
+
+  // The preview follows the form as you type, a moment after you stop.
+  const draftKey = JSON.stringify({
+    letterheadName: f.letterheadName, letterheadAddress: f.letterheadAddress, letterheadPhone: f.letterheadPhone, letterheadWebsite: f.letterheadWebsite,
+    invoiceNote: f.invoiceNote, remitTo: f.remitTo, accentColor: /^#[0-9A-Fa-f]{6}$/.test(f.accentColor) ? f.accentColor.toUpperCase() : "",
+  });
+  const logoStamp = s?.logo?.updated_at ?? "none";
+  useEffect(() => {
+    if (!s) return;
+    const t = window.setTimeout(() => setPreviewSrc(`/api/firm/billing/invoice-preview?d=${encodeURIComponent(draftKey)}&logo=${encodeURIComponent(logoStamp)}`), 600);
+    return () => window.clearTimeout(t);
+  }, [draftKey, logoStamp, s]);
+
+  async function chooseLogo(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoMsg(null);
+    if (!["image/png", "image/jpeg"].includes(file.type)) { setLogoMsg({ ok: false, text: "Use a PNG or JPEG image." }); return; }
+    if (file.size > 1024 * 1024) { setLogoMsg({ ok: false, text: "The logo can be up to 1 MB." }); return; }
+    const data = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+    setBusy("logo");
+    try {
+      await api("/firm/billing/logo", { method: "PUT", body: { contentType: file.type, data } });
+      await load();
+      setLogoMsg({ ok: true, text: "Logo saved. It prints on invoices, statements and settlement letters." });
+    } catch (err) { setLogoMsg({ ok: false, text: errorText(err) }); } finally { setBusy(""); }
+  }
+  async function removeLogo() {
+    setBusy("logo"); setLogoMsg(null);
+    try { await api("/firm/billing/logo", { method: "DELETE" }); await load(); setLogoMsg({ ok: true, text: "Logo removed." }); } catch (err) { setLogoMsg({ ok: false, text: errorText(err) }); } finally { setBusy(""); }
   }
 
   if (!s) return error ? <div className="error" role="alert">{error}</div> : null;
@@ -128,6 +169,43 @@ export function BillingSettingsTab() {
           <div className="fld"><label htmlFor="bs-lphone">Phone</label><input id="bs-lphone" className="in" value={f.letterheadPhone} disabled={!isAdmin} onChange={(e) => setF({ ...f, letterheadPhone: e.target.value })} /></div>
           <div className="fld span2"><label htmlFor="bs-laddr">Address</label><input id="bs-laddr" className="in" value={f.letterheadAddress} disabled={!isAdmin} onChange={(e) => setF({ ...f, letterheadAddress: e.target.value })} /></div>
           <div className="fld span2"><label htmlFor="bs-lweb">Website</label><input id="bs-lweb" className="in" value={f.letterheadWebsite} disabled={!isAdmin} onChange={(e) => setF({ ...f, letterheadWebsite: e.target.value })} /></div>
+          <div className="fld span2">
+            <span className="lbl">Logo</span>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              {s.logo ? <img className="logo-thumb" src={`/api/firm/billing/logo?v=${encodeURIComponent(s.logo.updated_at)}`} alt="Your letterhead logo" /> : <span className="meta">No logo. The firm name prints in its place.</span>}
+              {isAdmin && (
+                <>
+                  <label className="btn small secondary" style={{ cursor: "pointer" }}>
+                    {busy === "logo" ? "Saving" : s.logo ? "Replace logo" : "Upload logo"}
+                    <input type="file" hidden accept="image/png,image/jpeg" aria-label="Choose a logo image" onChange={(e) => void chooseLogo(e)} />
+                  </label>
+                  {s.logo && <button type="button" className="btn small ghost" disabled={busy === "logo"} onClick={() => void removeLogo()}>Remove</button>}
+                </>
+              )}
+            </div>
+            <span className="hint">PNG or JPEG, up to 1 MB. A wide logo on a white or clear background prints best.</span>
+            {logoMsg && <div className={logoMsg.ok ? "ok" : "error"} role={logoMsg.ok ? "status" : "alert"}>{logoMsg.text}</div>}
+          </div>
+          <div className="fld">
+            <label htmlFor="bs-accent">Accent color</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" aria-label="Pick the accent color" value={/^#[0-9A-Fa-f]{6}$/.test(f.accentColor) ? f.accentColor : "#B8733E"} disabled={!isAdmin} onChange={(e) => setF({ ...f, accentColor: e.target.value.toUpperCase() })} style={{ width: 40, height: 32, padding: 0, border: "1px solid var(--line)" }} />
+              <input id="bs-accent" className="in" value={f.accentColor} disabled={!isAdmin} onChange={(e) => setF({ ...f, accentColor: e.target.value })} placeholder="#B8733E" maxLength={7} style={{ maxWidth: 110 }} />
+              {f.accentColor && isAdmin && <button type="button" className="lk" onClick={() => setF({ ...f, accentColor: "" })}>Use copper</button>}
+            </div>
+            <span className="hint">The title, rule and totals on invoices. Blank uses Appeal EyeQ copper.</span>
+          </div>
+          <div className="fld span2"><label htmlFor="bs-remit">Pay by check: payable to and mail to</label>
+            <textarea id="bs-remit" className="in" rows={3} value={f.remitTo} disabled={!isAdmin} onChange={(e) => setF({ ...f, remitTo: e.target.value })} maxLength={300}
+              placeholder={`Payable to ${f.letterheadName || me.firm?.name || "your firm"}\nMail to ${f.letterheadAddress || "the firm's address"}`} />
+            <span className="hint">Printed in the "How to pay" box, next to the pay link and its QR code. Blank uses the firm name and address above.</span></div>
+        </div>
+        <div className="inv-preview">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h3 style={{ margin: 0 }}>Preview</h3>
+            <span className="meta">A sample invoice with the settings above, before you save. {previewSrc && <a href={previewSrc} target="_blank" rel="noreferrer">Open it full size</a>}</span>
+          </div>
+          {previewSrc ? <iframe className="pv-frame" src={previewSrc} title="Invoice preview" /> : <p className="meta">Preparing the preview…</p>}
         </div>
         {isAdmin && <div style={{ marginTop: 12 }}><button className="btn" disabled={busy === "save"}>{busy === "save" ? "Saving" : "Save billing settings"}</button></div>}
         {formMsg && <div className={formMsg.ok ? "ok" : "error"} role={formMsg.ok ? "status" : "alert"}>{formMsg.text}</div>}

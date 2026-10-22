@@ -3,14 +3,14 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useSession } from "../App";
 import { useApi } from "../data";
 import { formatDate, formatMoney, titleCase } from "../format";
-import { LEVELS, LEVEL_LABELS, SUBSTAGE_LABELS, LEVEL_SUBSTAGES, type Level, type Substage } from "../../../shared/domain";
+import { ASSET_TYPE_LABELS, LEVELS, LEVEL_LABELS, MAIN_ASSET_TYPES, SPECIALTY_ASSET_TYPES, SUBSTAGE_LABELS, LEVEL_SUBSTAGES, type AssetType, type Level, type Substage } from "../../../shared/domain";
 import { PropertySheet } from "../components/forms";
 import { MatterName } from "../components/MatterName";
 import type { DashboardData } from "./Dashboard";
 
 export interface PropertyRow {
   id: number; title: string; name: string; address1: string | null; city: string | null; state: string; status: string;
-  asset_type: string; use_type: string | null; county: string; township: string | null; account_id: number; account_name: string;
+  asset_type: string; asset_group: string; units: number | null; use_type: string | null; county: string; township: string | null; account_id: number; account_name: string;
   attorney_user_id: number | null; attorney_name: string | null; analyst_user_id: number | null; analyst_name: string | null;
   pin: string | null; level: Level | null; substage: Substage | null; days_in_substage: number | null; assessment_year: number | null;
   estimated_savings: string | null; next_action: string | null; next_action_on: string | null; no_fee: boolean;
@@ -37,6 +37,7 @@ function filtersFrom(params: URLSearchParams): Record<FilterKey, string> {
   }
   return f;
 }
+const typeLabel = (t: string) => ASSET_TYPE_LABELS[t as AssetType] ?? titleCase(t);
 const isStalled = (p: PropertyRow) => p.substage === "decision_analysis" && (p.days_in_substage ?? 0) > 14;
 
 const levelRank = (r: PropertyRow) => (r.level ? LEVELS.indexOf(r.level) * 10 + LEVEL_SUBSTAGES[r.level].indexOf(r.substage as Substage) : 99);
@@ -80,7 +81,8 @@ export function Properties() {
       substage: (filters.level ? LEVEL_SUBSTAGES[filters.level as Level] : (Object.keys(SUBSTAGE_LABELS) as Substage[]).filter((x) => x !== "closed" && x !== "pushed_next_level")).map((x) => [x, SUBSTAGE_LABELS[x]]),
       analyst: uniq(all.map((p) => p.analyst_name)).map((v) => [v, v]),
       attorney: uniq(all.map((p) => p.attorney_name)).map((v) => [v, v]),
-      type: ["residential", "commercial", "industrial"].map((v) => [v, titleCase(v)]),
+      // The three main types (each with what rolls up to it), a divider, then the specialty types on their own.
+      type: [...MAIN_ASSET_TYPES.map((v) => [v, `${ASSET_TYPE_LABELS[v]} (all)`]), ["", "──────────", "divider"], ...SPECIALTY_ASSET_TYPES.map((v) => [v, ASSET_TYPE_LABELS[v]])],
       client: uniq(all.map((p) => p.account_name)).map((v) => [v, v]),
       status: ["active", "closed", "inactive", "sold"].map((v) => [v, titleCase(v)]),
       flag: [["unfiled", "Unfiled, window open"], ["stalled", "Stalled in Decision analysis"], ["pending_ptab", "Pending PTAB"]],
@@ -98,7 +100,7 @@ export function Properties() {
       (!idSet || idSet.has(p.id)) &&
       (!filters.analyst || p.analyst_name === filters.analyst) &&
       (!filters.attorney || p.attorney_name === filters.attorney) &&
-      (!filters.type || p.asset_type === filters.type) &&
+      (!filters.type || ((MAIN_ASSET_TYPES as readonly string[]).includes(filters.type) ? p.asset_group === filters.type : p.asset_type === filters.type)) &&
       (!filters.client || p.account_name === filters.client) &&
       (!filters.status || p.status === filters.status) &&
       (!filters.flag || (filters.flag === "unfiled" ? p.unfiled_window_open : filters.flag === "pending_ptab" ? p.pending_ptab_years.length > 0 : isStalled(p))) &&
@@ -106,7 +108,7 @@ export function Properties() {
     );
     const key: Record<SortKey, (p: PropertyRow) => string | number> = {
       title: (p) => p.title.toLowerCase(), client: (p) => p.account_name.toLowerCase(), county: (p) => p.county, township: (p) => p.township ?? "",
-      type: (p) => p.asset_type, level: levelRank, analyst: (p) => p.analyst_name ?? "", attorney: (p) => p.attorney_name ?? "",
+      type: (p) => `${p.asset_group}/${p.asset_type === p.asset_group ? "" : p.asset_type}`, level: levelRank, analyst: (p) => p.analyst_name ?? "", attorney: (p) => p.attorney_name ?? "",
       est: (p) => Number(p.estimated_savings ?? -1), next: (p) => p.next_on ?? "9999",
     };
     return [...out].sort((a, b) => {
@@ -128,9 +130,9 @@ export function Properties() {
   );
 
   function exportCsv() {
-    const header = ["Matter", "PIN", "Client", "County", "Township", "Type", "Use", "Level", "Substage", "Unfiled, window open", "Analyst", "Attorney", "Est. savings", "Next", "Next date"];
+    const header = ["Matter", "PIN", "Client", "County", "Township", "Type", "Group", "Use", "Level", "Substage", "Unfiled, window open", "Analyst", "Attorney", "Est. savings", "Next", "Next date"];
     const lines = rows.map((p) => [
-      p.title, p.pin ?? "", p.account_name, p.county, p.township ?? "", titleCase(p.asset_type), p.use_type ?? "",
+      p.title, p.pin ?? "", p.account_name, p.county, p.township ?? "", typeLabel(p.asset_type), typeLabel(p.asset_group), p.use_type ?? "",
       p.level ? LEVEL_LABELS[p.level] : "", p.substage ? SUBSTAGE_LABELS[p.substage] : "", p.unfiled_window_open ? "Yes" : "",
       p.analyst_name ?? "", p.attorney_name ?? "", p.estimated_savings ?? "", p.next_title ?? "", p.next_on ?? "",
     ]);
@@ -200,7 +202,7 @@ export function Properties() {
               <label key={k}>{{ county: "County", township: "Township", level: "Appeal level", substage: "Substage", analyst: "Analyst", attorney: "Attorney", type: "Asset type", client: "Client", status: "Status", flag: "Needs attention" }[k]}
                 <select value={filters[k]} onChange={(e) => setFilters({ ...filters, [k]: e.target.value, ...(k === "county" ? { township: "" } : {}), ...(k === "level" ? { substage: "" } : {}) })}>
                   <option value="">All</option>
-                  {options[k].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  {options[k].map(([v, l, kind]) => (kind === "divider" ? <option key="divider" disabled value="">{l}</option> : <option key={v} value={v}>{l}</option>))}
                 </select>
               </label>
             ))}
@@ -231,7 +233,7 @@ export function Properties() {
                   </td>
                   <td>{p.county}</td>
                   <td>{p.township}</td>
-                  <td>{titleCase(p.asset_type)}</td>
+                  <td>{typeLabel(p.asset_type)}{p.asset_type !== p.asset_group && <span className="mn" style={{ display: "block" }}>{typeLabel(p.asset_group)}</span>}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     {p.level ? (
                       <>

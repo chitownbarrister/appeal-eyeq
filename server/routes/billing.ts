@@ -21,6 +21,7 @@ import { emailConfigured, escapeHtml, sendEmail, validEmail } from "../billing/e
 import { chargeSaved, firmStripe } from "../billing/payments.js";
 import { addExpenseLines, balances, expenseRows } from "../billing/trust.js";
 import { friendlyStripeError, stripe, stripeConfigured, StripeError, stripeV2 } from "../billing/stripe.js";
+import { attachmentList } from "./billing-design.js";
 
 /** Same key all day, so a double click makes one account; a later attempt (after a disconnect) can make a new one. */
 const accountKey = (firmId: number) => `acct-v2-${firmId}-${new Date().toISOString().slice(0, 10)}`;
@@ -157,6 +158,7 @@ async function invoiceDetail(c: pg.PoolClient, firmId: number, id: number) {
     ...r, note: inv.note, sentTo: inv.sent_to, voidReason: inv.void_reason, feeBasis: inv.fee_basis, lines, payments, emails: emailsSent,
     payable: due ? !due.blockedReason : false, blockedReason: due?.blockedReason ?? null, savedMethod: saved,
     suggestedTo: await billingRecipients(c, firmId, r.accountId, r.propertyId), hasLink: Boolean(await currentPayLink(c, firmId, { invoiceId: id })), today: todayIso(),
+    attachments: await attachmentList(c, firmId, id),
   };
 }
 
@@ -272,7 +274,11 @@ async function deliver(req: Request, target: { invoiceId?: number; statementId?:
       : (await c.query<{ due_on: string }>(`SELECT due_on FROM statements WHERE firm_id = $1 AND id = $2`, [firmId, target.statementId])).rows[0].due_on;
     const pdf = target.invoiceId ? await invoicePdf(c, firmId, target.invoiceId, link) : await statementPdf(c, firmId, target.statementId!, link);
     const s = await billingSettings(c, firmId);
-    return { link, due, firmName: firm.letterhead_name || firm.name, client, dueOn, pdf, replyTo: s.reply_to_email || req.auth!.user.email };
+    // Files attached to the invoice go with it (statements carry the statement alone).
+    const extra = target.invoiceId
+      ? (await c.query<{ name: string; content: Buffer }>(`SELECT name, content FROM invoice_attachments WHERE firm_id = $1 AND invoice_id = $2 ORDER BY position, id`, [firmId, target.invoiceId])).rows
+      : [];
+    return { link, due, firmName: firm.letterhead_name || firm.name, client, dueOn, pdf, extra, replyTo: s.reply_to_email || req.auth!.user.email };
   });
   let emailed = false;
   let emailError: string | null = null;
@@ -283,7 +289,7 @@ async function deliver(req: Request, target: { invoiceId?: number; statementId?:
     let status: "sent" | "failed" | "not_configured" = "sent";
     let providerId: string | null = null;
     try {
-      providerId = (await sendEmail({ to, subject, ...body, replyTo: prep.replyTo, fromName: prep.firmName, attachments: [{ name: `${prep.due.number}.pdf`, content: prep.pdf, contentType: "application/pdf" }] })).id;
+      providerId = (await sendEmail({ to, subject, ...body, replyTo: prep.replyTo, fromName: prep.firmName, attachments: [{ name: `${prep.due.number}.pdf`, content: prep.pdf, contentType: "application/pdf" }, ...prep.extra.map((a) => ({ name: a.name, content: a.content, contentType: "application/pdf" }))] })).id;
       emailed = true;
     } catch (e) {
       status = (e as { notConfigured?: boolean }).notConfigured ? "not_configured" : "failed";
@@ -557,8 +563,9 @@ billingRouter.get("/billing/settings", async (req, res) => {
   const out = await withContext(req.ctx!, async (c) => {
     const s = await billingSettings(c, req.ctx!.firmId!);
     const f = (await c.query(`SELECT letterhead_name, letterhead_address, letterhead_phone, letterhead_website FROM firms WHERE id = $1`, [req.ctx!.firmId])).rows[0];
+    const logo = (await c.query(`SELECT width, height, updated_at FROM firm_logos WHERE firm_id = $1`, [req.ctx!.firmId])).rows[0] ?? null;
     const acct = (await c.query(`SELECT stripe_account_id, charges_enabled, payouts_enabled, details_submitted, business_name, livemode FROM stripe_accounts WHERE firm_id = $1`, [req.ctx!.firmId])).rows[0] ?? null;
-    return { settings: s, letterhead: f, stripe: acct, stripeAvailable: stripeConfigured(), emailAvailable: emailConfigured() };
+    return { settings: s, letterhead: f, logo, stripe: acct, stripeAvailable: stripeConfigured(), emailAvailable: emailConfigured() };
   });
   res.json(out);
 });
@@ -572,6 +579,8 @@ const SettingsBody = z.object({
   letterheadAddress: z.string().trim().max(200).nullable().optional(),
   letterheadPhone: z.string().trim().max(40).nullable().optional(),
   letterheadWebsite: z.string().trim().max(120).nullable().optional(),
+  remitTo: z.string().trim().max(300, "Check remittance details are up to 300 characters.").nullable().optional(),
+  accentColor: z.union([z.string().trim().toUpperCase().regex(/^#[0-9A-F]{6}$/, "Use a color like #B8733E."), z.literal("")]).nullable().optional(),
 }).strict();
 
 billingRouter.put("/billing/settings", requireFirmAdmin, async (req, res) => {
@@ -586,6 +595,8 @@ billingRouter.put("/billing/settings", requireFirmAdmin, async (req, res) => {
     if (d.paymentTermsDays !== undefined) sets.push(["payment_terms_days", d.paymentTermsDays]);
     if (d.invoiceNote !== undefined) sets.push(["invoice_note", d.invoiceNote || null]);
     if (d.replyToEmail !== undefined) sets.push(["reply_to_email", d.replyToEmail || null]);
+    if (d.remitTo !== undefined) sets.push(["remit_to", d.remitTo || null]);
+    if (d.accentColor !== undefined) sets.push(["accent_color", d.accentColor || null]);
     if (sets.length) await c.query(`UPDATE billing_settings SET ${sets.map(([k], i) => `${k} = $${i + 2}`).join(", ")} WHERE firm_id = $1`, [firmId, ...sets.map(([, v]) => v)]);
   });
   // The letterhead lives on the firm (outside the tenant lock), so it's written by firm id and audited by hand.

@@ -9,7 +9,8 @@ import type pg from "pg";
 import { z } from "zod";
 import { withContext } from "../db.js";
 import { requirePermission } from "../auth.js";
-import { LEVELS, LEVEL_LABELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, pinKey, type Level } from "../../shared/domain.js";
+import { ASSET_TYPES, LEVELS, LEVEL_LABELS, SUBSTAGES, APPEAL_STATUSES, matterTitle, pinKey, type Level } from "../../shared/domain.js";
+import { propertyLevel } from "../assessment.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { effectiveFee, firstYearFee, type FeeBasis } from "../../shared/fees.js";
@@ -42,12 +43,6 @@ function bad(res: Response, err: z.ZodError | string): void {
 }
 
 const LEVEL_ORDER = `array_position(ARRAY['assessor','bor','ptab','circuit']::text[], a.level)`;
-
-/** Default level of assessment: Cook residential 10%, Cook commercial/industrial 25%, collar counties 33.33%. */
-function defaultRatio(countyName: string, assetType: string): string {
-  if (countyName === "Cook") return assetType === "residential" ? "10.00" : "25.00";
-  return "33.33";
-}
 
 /** Substages after which an appeal's figures are settled (invoiced, pushed on, or closed). */
 const SETTLED_SUBSTAGES = ["invoice_sent", "pushed_next_level", "closed"];
@@ -110,7 +105,7 @@ mattersRouter.get("/properties", async (req, res) => {
            FROM appeals a WHERE a.firm_id = $1
           ORDER BY a.property_id, a.assessment_year DESC, ${LEVEL_ORDER} DESC
        )
-       SELECT p.id, p.name, p.address1, p.city, p.state, p.zip, p.status, p.asset_type, p.use_type, p.tax_code,
+       SELECT p.id, p.name, p.address1, p.city, p.state, p.zip, p.status, p.asset_type, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_group, p.units, p.use_type, p.tax_code,
               co.name AS county, t.name AS township, p.account_id, ac.name AS account_name,
               p.attorney_user_id, att.name AS attorney_name, p.analyst_user_id, ana.name AS analyst_name,
               pp.pin, p.no_fee,
@@ -190,7 +185,8 @@ const PropertyFields = {
   townshipId: id.nullable().optional(),
   taxCode: optText(20),
   taxCodeConfirmed: z.boolean().optional(),
-  assetType: z.enum(["residential", "commercial", "industrial"]),
+  assetType: z.enum(ASSET_TYPES),
+  assetGroupOverride: z.enum(["residential", "commercial"]).nullable().optional(),
   useType: optText(120),
   levelOfAssessment: percentVal.nullable().optional(),
   attorneyUserId: id.nullable().optional(),
@@ -212,7 +208,9 @@ const NewProperty = z.object({
   pin: z.string().trim().min(5, "PIN is required").max(40),
   ownerName: optText(200),
   firstAppeal: z.object({ assessmentYear: z.coerce.number().int().min(2000).max(2100), level: z.enum(LEVELS) }).optional(),
-}).refine((v) => v.accountId || v.newAccount, { message: "Choose a client or create a new one." });
+}).refine((v) => v.accountId || v.newAccount, { message: "Choose a client or create a new one." })
+  .refine((v) => v.assetType !== "multifamily" || v.units != null || v.assetGroupOverride, { message: "Enter the number of units for a multi-family property, or choose how to group it." })
+  .refine((v) => v.assetType === "multifamily" || !v.assetGroupOverride, { message: "Only a multi-family property can be grouped by hand." });
 
 mattersRouter.post("/properties", requirePermission("properties.edit"), async (req, res) => {
   const parsed = NewProperty.safeParse(req.body);
@@ -237,15 +235,16 @@ mattersRouter.post("/properties", requirePermission("properties.edit"), async (r
     const prop = (await c.query<{ id: number }>(
       `INSERT INTO properties (firm_id, account_id, name, address1, address2, city, state, zip, county_id, township_id, tax_code,
                                tax_code_confirmed, asset_type, use_type, level_of_assessment, attorney_user_id, analyst_user_id,
-                               status, purchase_date, purchase_price, year_built, building_sqft, units, acreage, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,COALESCE($18,'active'),$19,$20,$21,$22,$23,$24,$25)
+                               status, purchase_date, purchase_price, year_built, building_sqft, units, acreage, notes,
+                               loa_manual, asset_group_override)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,COALESCE($18,'active'),$19,$20,$21,$22,$23,$24,$25,$26,$27)
        RETURNING id`,
       [
         firmId, accountId, d.name || d.address1, d.address1, d.address2 ?? null, d.city, d.state, d.zip ?? null, d.countyId,
         d.townshipId ?? null, d.taxCode ?? null, d.taxCodeConfirmed ?? false, d.assetType, d.useType ?? null,
-        d.levelOfAssessment ?? defaultRatio(county.name, d.assetType), d.attorneyUserId ?? null, d.analystUserId ?? null,
+        d.levelOfAssessment ?? null, d.attorneyUserId ?? null, d.analystUserId ?? null,
         d.status ?? null, d.purchaseDate ?? null, d.purchasePrice ?? null, d.yearBuilt ?? null, d.buildingSqft ?? null,
-        d.units ?? null, d.acreage ?? null, d.notes ?? null,
+        d.units ?? null, d.acreage ?? null, d.notes ?? null, d.levelOfAssessment != null, d.assetGroupOverride ?? null,
       ],
     )).rows[0];
     await c.query(
@@ -269,7 +268,9 @@ mattersRouter.get("/properties/:id", async (req, res) => {
     const p = (await c.query(
       `SELECT p.*, co.name AS county, t.name AS township, ac.name AS account_name, ac.account_type, ac.no_fee AS account_no_fee,
               ac.fee_percent_first_year AS account_fee_first_year, ac.fee_percent_refund AS account_fee_refund,
-              att.name AS attorney_name, ana.name AS analyst_name
+              ac.fee_type AS account_fee_type, ac.flat_fee AS account_flat_fee, ac.fee_cap AS account_fee_cap,
+              att.name AS attorney_name, ana.name AS analyst_name,
+              (SELECT r.multifamily_residential_max_units FROM county_rules r WHERE r.county_id = p.county_id) AS multifamily_max_units
          FROM properties p
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
          JOIN counties co ON co.id = p.county_id
@@ -320,7 +321,8 @@ mattersRouter.get("/properties/:id", async (req, res) => {
         ORDER BY l.id DESC`,
       [firmId, pid],
     )).rows;
-    return { p, parcels, appeals, contacts, activities, reference, feeDefaults, deadlineRows, cur, win, letters };
+    const level = await propertyLevel(c, firmId, pid);
+    return { p, parcels, appeals, contacts, activities, reference, feeDefaults, deadlineRows, cur, win, letters, level };
   });
   if (!data) {
     res.status(404).json({ error: "Property not found." });
@@ -335,7 +337,11 @@ mattersRouter.get("/properties/:id", async (req, res) => {
   };
   const primary = data.parcels.find((x) => x.is_primary) ?? data.parcels[0];
   res.json({
-    property: { ...p, title: matterTitle(primary?.pin ?? null, p.address1 || p.name, p.city, p.township) },
+    property: {
+      ...p, title: matterTitle(primary?.pin ?? null, p.address1 || p.name, p.city, p.township),
+      level_of_assessment: data.level?.percent ?? null, asset_group: data.level?.assetGroup ?? p.asset_type,
+      level_source: data.level ? { kind: data.level.source, classCode: data.level.classCode, label: data.level.label } : null,
+    },
     parcels: data.parcels,
     appeals: data.appeals.map((a) => {
       const fee = effectiveFee(a.level, { ...feeSources, appeal: { fee_percent: a.fee_percent } });
@@ -374,7 +380,7 @@ const UpdateProperty = z.object(PropertyFields).partial().extend({
 const PROPERTY_COLUMNS: Record<string, string> = {
   name: "name", address1: "address1", address2: "address2", city: "city", state: "state", zip: "zip", countyId: "county_id",
   townshipId: "township_id", taxCode: "tax_code", taxCodeConfirmed: "tax_code_confirmed", assetType: "asset_type",
-  useType: "use_type", levelOfAssessment: "level_of_assessment", attorneyUserId: "attorney_user_id",
+  useType: "use_type", levelOfAssessment: "level_of_assessment", assetGroupOverride: "asset_group_override", attorneyUserId: "attorney_user_id",
   analystUserId: "analyst_user_id", status: "status", purchaseDate: "purchase_date", purchasePrice: "purchase_price",
   yearBuilt: "year_built", buildingSqft: "building_sqft", units: "units", acreage: "acreage", notes: "notes",
   accountId: "account_id", noFee: "no_fee", feePercentFirstYear: "fee_percent_first_year", feePercentRefund: "fee_percent_refund",
@@ -396,6 +402,13 @@ mattersRouter.patch("/properties/:id", requirePermission("properties.edit"), asy
   }
   if (!changes.length) return bad(res, "Nothing to change.");
   const sets = changes.map(([k], i) => `${PROPERTY_COLUMNS[k]} = $${i + 3}`);
+  // A typed level of assessment is kept as typed; clearing it hands it back to the class code.
+  if (parsed.data.levelOfAssessment !== undefined) sets.push(`loa_manual = ${parsed.data.levelOfAssessment === null ? "false" : "true"}`);
+  // Only multi-family is grouped by hand; any other type drops the override.
+  if (parsed.data.assetType && parsed.data.assetType !== "multifamily") {
+    if (parsed.data.assetGroupOverride) return bad(res, "Only a multi-family property can be grouped by hand.");
+    if (parsed.data.assetGroupOverride === undefined) sets.push("asset_group_override = NULL");
+  }
   const updated = await withContext(req.ctx!, async (c) => {
     const tw = parsed.data.townshipId, co = parsed.data.countyId;
     if (tw || co) {
@@ -407,6 +420,10 @@ mattersRouter.patch("/properties/:id", requirePermission("properties.edit"), asy
           if (!ok.rowCount) throw Object.assign(new Error("township"), { status: 400, publicMessage: "That township isn't in the chosen county." });
         }
       }
+    }
+    if (parsed.data.assetGroupOverride && !parsed.data.assetType) {
+      const t = (await c.query(`SELECT asset_type FROM properties WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, pid])).rows[0];
+      if (t && t.asset_type !== "multifamily") throw Object.assign(new Error("override"), { status: 400, publicMessage: "Only a multi-family property can be grouped by hand." });
     }
     return c.query(`UPDATE properties SET ${sets.join(", ")} WHERE firm_id = $1 AND id = $2 RETURNING id`, [
       req.ctx!.firmId, pid, ...changes.map(([, v]) => v),
@@ -582,7 +599,7 @@ async function createAppeal(
   )).rows[0];
   const origAv = prevAppeal ? prevAppeal.resolved_av ?? prevAppeal.orig_av : latest?.av ?? null;
   const ref = await referenceFor(c, p.county_id, p.township_id, p.tax_code);
-  const ratio = p.level_of_assessment ?? defaultRatio(p.county_name, p.asset_type);
+  const ratio = (await propertyLevel(c, firmId, propertyId))?.percent ?? null;
   const taxYear = ref.rate?.taxYear ?? ref.equalizer?.year ?? a.assessmentYear - 1;
   const taxes = computeAppealTax({
     origAv, targetAv: null, resolvedAv: null,
@@ -952,7 +969,7 @@ mattersRouter.get("/accounts/:id", async (req, res) => {
          SELECT DISTINCT ON (a.property_id) a.* FROM appeals a WHERE a.firm_id = $1
           ORDER BY a.property_id, a.assessment_year DESC, ${LEVEL_ORDER} DESC
        )
-       SELECT p.id, p.name, p.address1, p.city, p.state, p.status, p.asset_type, co.name AS county, t.name AS township,
+       SELECT p.id, p.name, p.address1, p.city, p.state, p.status, p.asset_type, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_group, co.name AS county, t.name AS township,
               (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin,
               cur.level, cur.substage
          FROM properties p JOIN counties co ON co.id = p.county_id LEFT JOIN townships t ON t.id = p.township_id
@@ -1068,51 +1085,106 @@ mattersRouter.delete("/contacts/:id", requirePermission("accounts.edit"), async 
 });
 
 // ================================================================ activities
-const ActivityBody = z.object({
+// Tasks, notes, calls and emails on a client, property or appeal; and calendar entries
+// (meetings, calls, reminders, tasks) made on the calendar, which may be left untagged
+// as a firm entry, or marked private so only the person who made it sees it.
+const timeVal = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Times use HH:MM").nullable().optional().or(z.literal("").transform(() => null));
+const ActivityFields = {
   accountId: id.nullable().optional(),
   propertyId: id.nullable().optional(),
   appealId: id.nullable().optional(),
-  kind: z.enum(["note", "call", "email", "task"]).default("task"),
+  kind: z.enum(["note", "call", "email", "task", "meeting", "reminder"]).default("task"),
   subject: z.string().trim().min(1, "Subject is required").max(300),
   body: optText(4000),
   dueOn: optDate,
+  startTime: timeVal,
+  endTime: timeVal,
+  location: optText(200),
+  isPrivate: z.boolean().optional(),
   assignedUserId: id.nullable().optional(),
   status: z.enum(["open", "done"]).optional(),
-});
+};
+const ActivityBody = z.object(ActivityFields);
 const ACTIVITY_COLUMNS: Record<string, string> = {
   accountId: "account_id", propertyId: "property_id", appealId: "appeal_id", kind: "kind", subject: "subject", body: "body",
-  dueOn: "due_on", assignedUserId: "assigned_user_id", status: "status",
+  dueOn: "due_on", startTime: "start_time", endTime: "end_time", location: "location", isPrivate: "is_private",
+  assignedUserId: "assigned_user_id", status: "status",
 };
+
+/** The tags must agree: the appeal is on the property, the property belongs to the client. */
+async function checkActivityTags(c: pg.PoolClient, firmId: number, t: { accountId?: number | null; propertyId?: number | null; appealId?: number | null }): Promise<void> {
+  const fail = (m: string) => Object.assign(new Error("tags"), { status: 400, publicMessage: m });
+  if (t.appealId) {
+    const a = (await c.query(`SELECT property_id FROM appeals WHERE firm_id = $1 AND id = $2`, [firmId, t.appealId])).rows[0];
+    if (!a) throw fail("That appeal isn't in your firm.");
+    if (t.propertyId && a.property_id !== t.propertyId) throw fail("That appeal isn't on this property.");
+  }
+  if (t.propertyId) {
+    const p = (await c.query(`SELECT account_id FROM properties WHERE firm_id = $1 AND id = $2`, [firmId, t.propertyId])).rows[0];
+    if (!p) throw fail("That property isn't in your firm.");
+    if (t.accountId && p.account_id !== t.accountId) throw fail("That property belongs to a different client.");
+  }
+  if (t.accountId) {
+    const ok = await c.query(`SELECT 1 FROM accounts WHERE firm_id = $1 AND id = $2`, [firmId, t.accountId]);
+    if (!ok.rowCount) throw fail("That client isn't in your firm.");
+  }
+}
+
+const untagged = (v: { accountId?: number | null; propertyId?: number | null; appealId?: number | null }) => !v.accountId && !v.propertyId && !v.appealId;
 
 mattersRouter.post("/activities", async (req, res) => {
   if (req.auth!.user.isSuperAdmin) { res.status(403).json({ error: "Support access is read-only." }); return; }
-  const parsed = ActivityBody.refine((v) => v.accountId || v.propertyId || v.appealId, { message: "Attach the activity to a client, property or appeal." }).safeParse(req.body);
+  const parsed = ActivityBody
+    .refine((v) => !untagged(v) || v.dueOn, { message: "Attach the activity to a client, property or appeal, or give it a date for the calendar." })
+    .refine((v) => !v.isPrivate || untagged(v), { message: "Only an untagged calendar entry can be private." })
+    .refine((v) => !v.endTime || (v.startTime && v.endTime >= v.startTime), { message: "The end time can't be before the start time." })
+    .safeParse(req.body);
   if (!parsed.success) return bad(res, parsed.error);
   const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
   const cols = ["firm_id", "created_by_user_id", ...entries.map(([k]) => ACTIVITY_COLUMNS[k])];
-  const r = await withContext(req.ctx!, (c) =>
-    c.query(`INSERT INTO activities (${cols.join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`, [
+  const r = await withContext(req.ctx!, async (c) => {
+    await checkActivityTags(c, req.ctx!.firmId!, parsed.data);
+    return c.query(`INSERT INTO activities (${cols.join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`, [
       req.ctx!.firmId, req.auth!.user.id, ...entries.map(([, v]) => v),
-    ]),
-  );
+    ]);
+  });
   res.status(201).json({ activity: r.rows[0] });
 });
+
+/** Someone else's private calendar entry is invisible: not found, the same as another firm's. */
+const VISIBLE = `(NOT is_private OR created_by_user_id = $3)`;
 
 mattersRouter.patch("/activities/:id", async (req, res) => {
   if (req.auth!.user.isSuperAdmin) { res.status(403).json({ error: "Support access is read-only." }); return; }
   const aid = idParam(req);
-  const parsed = ActivityBody.partial().strict().safeParse(req.body);
+  const parsed = z.object(ActivityFields).partial().strict().safeParse(req.body);
   if (!aid) return bad(res, "Invalid activity.");
   if (!parsed.success) return bad(res, parsed.error);
   const entries = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
   if (!entries.length) return bad(res, "Nothing to change.");
-  const sets = entries.map(([k], i) => `${ACTIVITY_COLUMNS[k]} = $${i + 3}`);
+  const sets = entries.map(([k], i) => `${ACTIVITY_COLUMNS[k]} = $${i + 4}`);
   if (parsed.data.status === "done") sets.push("completed_at = now()");
   if (parsed.data.status === "open") sets.push("completed_at = NULL");
-  const r = await withContext(req.ctx!, (c) =>
-    c.query(`UPDATE activities SET ${sets.join(", ")} WHERE firm_id = $1 AND id = $2 RETURNING *`, [req.ctx!.firmId, aid, ...entries.map(([, v]) => v)]),
-  );
-  if (!r.rowCount) { res.status(404).json({ error: "Activity not found." }); return; }
+  const firmId = req.ctx!.firmId!;
+  const r = await withContext(req.ctx!, async (c) => {
+    const cur = (await c.query(`SELECT * FROM activities WHERE firm_id = $1 AND id = $2 AND ${VISIBLE} FOR UPDATE`, [firmId, aid, req.auth!.user.id])).rows[0];
+    if (!cur) return null;
+    const next = {
+      accountId: parsed.data.accountId !== undefined ? parsed.data.accountId : cur.account_id,
+      propertyId: parsed.data.propertyId !== undefined ? parsed.data.propertyId : cur.property_id,
+      appealId: parsed.data.appealId !== undefined ? parsed.data.appealId : cur.appeal_id,
+    };
+    const dueOn = parsed.data.dueOn !== undefined ? parsed.data.dueOn : cur.due_on;
+    const priv = parsed.data.isPrivate ?? cur.is_private;
+    if (untagged(next) && !dueOn) throw Object.assign(new Error("tags"), { status: 400, publicMessage: "An untagged calendar entry needs a date." });
+    if (priv && !untagged(next)) throw Object.assign(new Error("tags"), { status: 400, publicMessage: "Only an untagged calendar entry can be private." });
+    const start = parsed.data.startTime !== undefined ? parsed.data.startTime : cur.start_time;
+    const end = parsed.data.endTime !== undefined ? parsed.data.endTime : cur.end_time;
+    if (end && (!start || String(end) < String(start))) throw Object.assign(new Error("times"), { status: 400, publicMessage: "The end time can't be before the start time." });
+    await checkActivityTags(c, firmId, next);
+    return c.query(`UPDATE activities SET ${sets.join(", ")} WHERE firm_id = $1 AND id = $2 AND ${VISIBLE} RETURNING *`, [firmId, aid, req.auth!.user.id, ...entries.map(([, v]) => v)]);
+  });
+  if (!r?.rowCount) { res.status(404).json({ error: "Activity not found." }); return; }
   res.json({ activity: r.rows[0] });
 });
 
@@ -1120,7 +1192,7 @@ mattersRouter.delete("/activities/:id", async (req, res) => {
   if (req.auth!.user.isSuperAdmin) { res.status(403).json({ error: "Support access is read-only." }); return; }
   const aid = idParam(req);
   if (!aid) return bad(res, "Invalid activity.");
-  const r = await withContext(req.ctx!, (c) => c.query(`DELETE FROM activities WHERE firm_id = $1 AND id = $2`, [req.ctx!.firmId, aid]));
+  const r = await withContext(req.ctx!, (c) => c.query(`DELETE FROM activities WHERE firm_id = $1 AND id = $2 AND ${VISIBLE}`, [req.ctx!.firmId, aid, req.auth!.user.id]));
   if (!r.rowCount) { res.status(404).json({ error: "Activity not found." }); return; }
   res.json({ ok: true });
 });

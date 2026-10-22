@@ -9,6 +9,7 @@ import { query, withContext, type DbContext } from "../db.js";
 import { matterTitle } from "../../shared/domain.js";
 import { hashToken, payable, type Payable } from "../billing/core.js";
 import { invoicePdf, statementPdf } from "../billing/pdf.js";
+import { sendPdf } from "./billing-design.js";
 import { applyCheckoutSession, applyIntent, createCheckout, firmStripe } from "../billing/payments.js";
 import { friendlyStripeError, stripe, StripeError, verifyStripeSignature } from "../billing/stripe.js";
 
@@ -61,6 +62,10 @@ async function summary(l: Link) {
       items: items.map((i) => ({ number: i.number, matter: matterTitle(i.pin, i.address1 || i.name, i.city, i.township), issuedOn: i.issued_on, total: i.total })),
       payment: lastPayment ? { status: lastPayment.status, method: lastPayment.method, amount: lastPayment.amount, at: lastPayment.created_at } : null,
       online: Boolean(acct?.charges_enabled),
+      attachments: (await c.query<{ id: number; name: string; size: number }>(
+        `SELECT id, name, size FROM invoice_attachments WHERE firm_id = $1 AND invoice_id = ANY($2::int[]) ORDER BY invoice_id, position, id`,
+        [l.firm_id, due.invoiceIds],
+      )).rows,
     };
   });
 }
@@ -88,6 +93,22 @@ payRouter.get("/pay/:token/pdf", async (req, res) => {
   res.setHeader("Content-Disposition", `inline; filename="${l.invoice_id ? "invoice" : "statement"}.pdf"`);
   res.setHeader("Cache-Control", "no-store");
   res.end(pdf);
+});
+
+/** A file the firm attached to the bill (only while the link is live and only that bill's own files). */
+payRouter.get("/pay/:token/attachments/:att", async (req, res) => {
+  const l = await linkFor(req);
+  const att = Number(req.params.att);
+  if (!Number.isInteger(att) || att <= 0 || l.revoked_at) throw err(404, "That file isn't available.");
+  const a = await withContext(sys(l.firm_id), async (c) => {
+    const due = (await payable(c, l.firm_id, targetOf(l)))!;
+    return (await c.query<{ name: string; content: Buffer }>(
+      `SELECT name, content FROM invoice_attachments WHERE firm_id = $1 AND id = $2 AND invoice_id = ANY($3::int[])`,
+      [l.firm_id, att, due.invoiceIds],
+    )).rows[0];
+  });
+  if (!a) throw err(404, "That file isn't available.");
+  sendPdf(res, a.name, a.content);
 });
 
 payRouter.post("/pay/:token/checkout", async (req, res) => {

@@ -6,13 +6,18 @@ import { Link } from "react-router-dom";
 import { api, ApiError, errorText } from "../api";
 import { useCounties, useFirmUsers } from "../data";
 import { cleanNumber, nn } from "../format";
-import { LEVELS, LEVEL_LABELS, type Level } from "../../../shared/domain";
+import { ASSET_TYPE_LABELS, LEVELS, LEVEL_LABELS, MAIN_ASSET_TYPES, SPECIALTY_ASSET_TYPES, assetGroup, type AssetGroup, type AssetType, type Level } from "../../../shared/domain";
 import { Sheet } from "./Sheet";
 
 export interface PropertyRecord {
   id: number; account_id: number; account_name?: string; name: string; address1: string | null; address2: string | null; city: string | null;
   state: string; zip: string | null; county_id: number; township_id: number | null; tax_code: string | null; tax_code_confirmed: boolean;
-  asset_type: "residential" | "commercial" | "industrial"; use_type: string | null; level_of_assessment: string | null; attorney_user_id: number | null;
+  asset_type: AssetType; asset_group?: AssetGroup; asset_group_override: AssetGroup | null; use_type: string | null;
+  level_of_assessment: string | null; loa_manual?: boolean;
+  level_source?: { kind: "manual" | "class" | "county" | "default"; classCode: string | null; label: string | null } | null;
+  account_no_fee?: boolean; account_fee_type?: "contingency" | "flat"; account_flat_fee?: string | null; account_fee_cap?: string | null;
+  multifamily_max_units?: number | null;
+  attorney_user_id: number | null;
   analyst_user_id: number | null; status: string; purchase_date: string | null; purchase_price: string | null; year_built: number | null;
   building_sqft: number | null; units: number | null; acreage: string | null; notes: string | null; no_fee: boolean;
   fee_percent_first_year: string | null; fee_percent_refund: string | null;
@@ -64,7 +69,9 @@ export function PropertySheet({
     address1: str(existing?.address1), address2: str(existing?.address2), city: str(existing?.city), zip: str(existing?.zip),
     countyId: str(existing?.county_id), townshipId: str(existing?.township_id), pin: "", ownerName: "",
     taxCode: str(existing?.tax_code), taxCodeConfirmed: existing?.tax_code_confirmed ?? false,
-    assetType: existing?.asset_type ?? "residential", useType: str(existing?.use_type), levelOfAssessment: str(existing?.level_of_assessment),
+    assetType: (existing?.asset_type ?? "residential") as AssetType, groupOverride: str(existing?.asset_group_override), useType: str(existing?.use_type),
+    // Only a level someone typed is shown in the box; otherwise it follows the class code and the box stays empty.
+    levelOfAssessment: existing?.loa_manual ? str(existing?.level_of_assessment) : "",
     attorneyUserId: str(existing?.attorney_user_id), analystUserId: str(existing?.analyst_user_id), status: existing?.status ?? "active",
     purchaseDate: str(existing?.purchase_date), purchasePrice: str(existing?.purchase_price), yearBuilt: str(existing?.year_built),
     buildingSqft: str(existing?.building_sqft), units: str(existing?.units), acreage: str(existing?.acreage), notes: str(existing?.notes),
@@ -76,7 +83,14 @@ export function PropertySheet({
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const countyTownships = useMemo(() => townships.filter((t) => String(t.county_id) === f.countyId).sort((a, b) => a.name.localeCompare(b.name)), [townships, f.countyId]);
   const countyName = counties.find((c) => String(c.id) === f.countyId)?.name;
-  const ratioHint = countyName === "Cook" ? (f.assetType === "residential" ? "10" : "25") : countyName ? "33.33" : "";
+  const county = counties.find((c) => String(c.id) === f.countyId);
+  const unitsNum = f.units.trim() === "" ? null : Number(cleanNumber(f.units));
+  const group = assetGroup(f.assetType, unitsNum, county?.multifamily_max_units ?? null, (f.groupOverride || null) as AssetGroup | null);
+  const byUnits = assetGroup(f.assetType, unitsNum, county?.multifamily_max_units ?? null, null);
+  // What the level would be without a typed one: the class code's level when we know it, else the county default for the type.
+  const autoLevel = existing?.level_source && existing.level_source.kind !== "manual" && existing.county_id === Number(f.countyId) && existing.asset_type === f.assetType
+    ? existing.level_of_assessment
+    : countyName === "Cook" ? (f.assetType === "multifamily" || group === "residential" ? "10" : "25") : countyName ? "33.33" : "";
   const newClient = f.accountId === "new";
 
   async function save() {
@@ -85,7 +99,8 @@ export function PropertySheet({
     const common = {
       address1: f.address1.trim(), address2: nn(f.address2), city: f.city.trim(), zip: nn(f.zip), countyId: Number(f.countyId),
       townshipId: f.townshipId ? Number(f.townshipId) : null, taxCode: nn(f.taxCode), taxCodeConfirmed: f.taxCodeConfirmed,
-      assetType: f.assetType, useType: nn(f.useType), levelOfAssessment: nn(cleanNumber(f.levelOfAssessment)),
+      assetType: f.assetType, assetGroupOverride: f.assetType === "multifamily" && f.groupOverride ? f.groupOverride : null,
+      useType: nn(f.useType), levelOfAssessment: nn(cleanNumber(f.levelOfAssessment)),
       attorneyUserId: f.attorneyUserId ? Number(f.attorneyUserId) : null, analystUserId: f.analystUserId ? Number(f.analystUserId) : null,
       purchaseDate: nn(f.purchaseDate), purchasePrice: nn(cleanNumber(f.purchasePrice)), yearBuilt: intOrNull(f.yearBuilt),
       buildingSqft: intOrNull(f.buildingSqft), units: intOrNull(f.units), acreage: nn(cleanNumber(f.acreage)), notes: nn(f.notes),
@@ -170,10 +185,26 @@ export function PropertySheet({
         )}
         <div className="fld">
           <label htmlFor="pf-type">Asset type</label>
-          <select id="pf-type" className="in" value={f.assetType} onChange={set("assetType")}>
-            <option value="residential">Residential</option><option value="commercial">Commercial</option><option value="industrial">Industrial</option>
+          <select id="pf-type" className="in" value={f.assetType} onChange={(e) => setF({ ...f, assetType: e.target.value as AssetType, groupOverride: "" })}>
+            {MAIN_ASSET_TYPES.map((t) => <option key={t} value={t}>{ASSET_TYPE_LABELS[t]}</option>)}
+            <option disabled value="">──────────</option>
+            {SPECIALTY_ASSET_TYPES.map((t) => <option key={t} value={t}>{ASSET_TYPE_LABELS[t]}</option>)}
           </select>
+          {f.assetType !== group && <span className="hint">Grouped with {ASSET_TYPE_LABELS[group]}</span>}
         </div>
+        {f.assetType === "multifamily" && (
+          <div className="fld">
+            <label htmlFor="pf-group">Group as</label>
+            <select id="pf-group" className="in" value={f.groupOverride} onChange={set("groupOverride")}>
+              <option value="">By unit count ({unitsNum === null ? "enter units" : ASSET_TYPE_LABELS[byUnits]})</option>
+              <option value="residential">Residential</option>
+              <option value="commercial">Commercial</option>
+            </select>
+            <span className="hint">
+              {countyName ? `${countyName}: ${county?.multifamily_max_units ?? 6} units or fewer group as Residential, more as Commercial.` : "Choose the county first."}
+            </span>
+          </div>
+        )}
         <div className="fld"><label htmlFor="pf-use">Use</label><input id="pf-use" className="in" value={f.useType} onChange={set("useType")} placeholder="Single family, retail, warehouse" /></div>
         <div className="fld">
           <label htmlFor="pf-tax">Tax code</label>
@@ -182,7 +213,8 @@ export function PropertySheet({
         </div>
         <div className="fld">
           <label htmlFor="pf-loa">Level of assessment %</label>
-          <input id="pf-loa" className="in num" value={f.levelOfAssessment} onChange={set("levelOfAssessment")} placeholder={ratioHint ? `${ratioHint} (default)` : ""} inputMode="decimal" />
+          <input id="pf-loa" className="in num" value={f.levelOfAssessment} onChange={set("levelOfAssessment")} placeholder={autoLevel ? `${Number(autoLevel)} (automatic)` : ""} inputMode="decimal" />
+          <span className="hint">Leave blank to follow the PIN's class code under the county's rules. Type a figure only to override it.</span>
         </div>
         <div className="fld">
           <label htmlFor="pf-atty">Attorney</label>
@@ -210,7 +242,7 @@ export function PropertySheet({
         <div className="fld"><label htmlFor="pf-pp">Purchase price</label><input id="pf-pp" className="in num" value={f.purchasePrice} onChange={set("purchasePrice")} inputMode="decimal" /></div>
         <div className="fld"><label htmlFor="pf-yb">Year built</label><input id="pf-yb" className="in num" value={f.yearBuilt} onChange={set("yearBuilt")} inputMode="numeric" /></div>
         <div className="fld"><label htmlFor="pf-sf">Building sq ft</label><input id="pf-sf" className="in num" value={f.buildingSqft} onChange={set("buildingSqft")} inputMode="numeric" /></div>
-        <div className="fld"><label htmlFor="pf-units">Units</label><input id="pf-units" className="in num" value={f.units} onChange={set("units")} inputMode="numeric" /></div>
+        <div className="fld"><label htmlFor="pf-units">Units</label><input id="pf-units" className="in num" value={f.units} onChange={set("units")} inputMode="numeric" required={f.assetType === "multifamily" && !f.groupOverride} /></div>
         <div className="fld"><label htmlFor="pf-acres">Acreage</label><input id="pf-acres" className="in num" value={f.acreage} onChange={set("acreage")} inputMode="decimal" /></div>
         <div className="fld span2"><label htmlFor="pf-notes">Notes</label><textarea id="pf-notes" className="in" value={f.notes} onChange={set("notes")} /></div>
       </div>

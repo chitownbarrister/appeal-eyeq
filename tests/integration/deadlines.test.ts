@@ -159,7 +159,7 @@ describe("calendar", () => {
     const elk = cal.body.windows.find((w: { label: string }) => w.label === "Elk Grove BOR");
     expect(elk).toMatchObject({ properties: 2, unfiled: 1, opens_on: "2026-09-28", closes_on: "2026-10-27" });
     expect(cal.body.deadlines.map((d: { title: string }) => d.title).sort()).toEqual(["BOR hearing", "Evidence due", "PTAB filing deadline"]);
-    expect(cal.body.tasks.map((t: { subject: string }) => t.subject).sort()).toEqual([
+    expect(cal.body.entries.map((t: { subject: string }) => t.subject).sort()).toEqual([
       "Client letter: fairly assessed", "Decision received Sep 21: invoice or push to PTAB", "Push to BOR or close",
     ]);
     const hearing = cal.body.deadlines.find((d: { title: string }) => d.title === "BOR hearing");
@@ -168,7 +168,7 @@ describe("calendar", () => {
 
   it("marks what belongs to the signed-in user", async () => {
     const cal = await call(env.base, julie, "GET", "/api/firm/calendar?from=2026-10-01&to=2026-11-30");
-    const mine = cal.body.tasks.filter((t: { mine: boolean }) => t.mine).map((t: { subject: string }) => t.subject);
+    const mine = cal.body.entries.filter((t: { mine: boolean }) => t.mine).map((t: { subject: string }) => t.subject);
     // Julie is the analyst on 512 Dole Ave. and 1300 Sheridan Rd., so their tasks are assigned to her.
     expect(mine.sort()).toEqual(["Client letter: fairly assessed", "Decision received Sep 21: invoice or push to PTAB"]);
     const deadlines = cal.body.deadlines as { mine: boolean; attorney_name: string; analyst_name: string; property_short: string }[];
@@ -201,7 +201,7 @@ describe("firm isolation on the new routes", () => {
     expect((await call(env.base, olivia, "POST", `/api/firm/properties/${env.otherPropertyId}/deadlines`, { kind: "hearing", appealId: bor2026Id, dueOn: "2026-10-25" })).status).toBe(400);
     const cal = await call(env.base, olivia, "GET", "/api/firm/calendar?from=2026-01-01&to=2026-12-31");
     expect(cal.body.deadlines).toHaveLength(0);
-    expect(cal.body.tasks).toHaveLength(0);
+    expect(cal.body.entries).toHaveLength(0);
     const still = await call(env.base, dillon, "GET", `/api/firm/properties/${towerId}`);
     expect(still.body.deadlines.find((d: { id: number }) => d.id === id).title).toBe("Isolation check");
     await call(env.base, dillon, "DELETE", `/api/firm/deadlines/${id}`);

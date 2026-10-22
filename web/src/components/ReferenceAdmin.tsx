@@ -16,11 +16,12 @@ interface RateRow { id: number; county_id: number; county: string; tax_code: str
 interface Refresh { appealsUpdated: number; firmsUpdated: number }
 interface ChangeRow { id: number; table_name: string; action: string; at: string; actor_name: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null }
 
-type Panel = "windows" | "equalizers" | "rates" | "townships" | "log";
+type Panel = "windows" | "equalizers" | "rates" | "townships" | "rules" | "log";
 const PANELS: { id: Panel; label: string }[] = [
   { id: "windows", label: "Filing windows" }, { id: "equalizers", label: "Equalizers" }, { id: "rates", label: "Tax rates" },
-  { id: "townships", label: "Townships" }, { id: "log", label: "Change log" },
+  { id: "townships", label: "Townships" }, { id: "rules", label: "Assessment rules" }, { id: "log", label: "Change log" },
 ];
+interface ClassLevelRow { id: number; county_id: number; county: string; class_prefix: string; level_percent: string; label: string }
 
 function refreshText(r: Refresh | undefined): string {
   if (!r) return "";
@@ -56,6 +57,7 @@ export function ReferenceTab() {
         {panel === "equalizers" && <EqualizersPanel geo={geo} say={say} />}
         {panel === "rates" && <RatesPanel geo={geo} say={say} />}
         {panel === "townships" && <TownshipsPanel geo={geo} reload={async () => { clearLookupCache(); await loadGeo(); }} say={say} />}
+        {panel === "rules" && <RulesPanel geo={geo} reload={async () => { clearLookupCache(); await loadGeo(); }} say={say} />}
         {panel === "log" && <ChangeLog />}
       </div>
     </>
@@ -401,12 +403,100 @@ function TownshipsPanel({ geo, reload, say }: { geo: { counties: County[]; towns
   );
 }
 
+// ---------------------------------------------------------------- assessment rules
+/**
+ * Per county: how many units a Multi-family property can have and still group as Residential, and the
+ * level of assessment by class code. Every firm reads these live; appeals already created keep their level.
+ */
+function RulesPanel({ geo, reload, say }: { geo: { counties: County[] }; reload: () => Promise<void>; say: (m: string) => void }) {
+  const [county, setCounty] = useState("");
+  const [rows, setRows] = useState<ClassLevelRow[]>([]);
+  const [units, setUnits] = useState("");
+  const [add, setAdd] = useState({ prefix: "", pct: "", label: "" });
+  const [edit, setEdit] = useState<{ id: number; pct: string; label: string } | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => api<{ classLevels: ClassLevelRow[] }>("/reference/class-levels").then((d) => setRows(d.classLevels)), []);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!county && geo.counties.length) setCounty(String(geo.counties.find((c) => c.name === "Cook")?.id ?? geo.counties[0].id)); }, [geo.counties, county]);
+  const c = geo.counties.find((x) => String(x.id) === county);
+  useEffect(() => { setUnits(c?.multifamily_max_units ? String(c.multifamily_max_units) : "6"); }, [c?.multifamily_max_units, county]);
+  const list = rows.filter((r) => String(r.county_id) === county);
+  const run = async (fn: () => Promise<string>) => {
+    setError("");
+    try { say(await fn()); await load(); } catch (err) { setError(errorText(err)); }
+  };
+  return (
+    <section className="card pad">
+      <div className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field"><label htmlFor="r-county">County</label><CountySelect id="r-county" geo={geo} value={county} onChange={setCounty} /></div>
+      </div>
+      {c && (
+        <>
+          <h3 style={{ marginTop: 16 }}>Multi-family grouping</h3>
+          <p className="muted small">A Multi-family property with this many units or fewer groups as Residential; more groups as Commercial. A property can override it. This is for grouping and reports only: the level of assessment comes from the class code below.</p>
+          <div className="form-row" style={{ alignItems: "flex-end" }}>
+            <div className="field"><label htmlFor="r-units">Residential up to (units)</label><input id="r-units" className="num" value={units} onChange={(e) => setUnits(e.target.value)} inputMode="numeric" style={{ maxWidth: 120 }} /></div>
+            <button className="btn" onClick={() => void run(async () => {
+              await api(`/admin/county-rules/${c.id}`, { method: "PUT", body: { multifamilyMaxUnits: Number(units) } });
+              await reload();
+              return `${c.name}: Multi-family with ${units} units or fewer now groups as Residential, for every firm.`;
+            })}>Save for every firm</button>
+          </div>
+
+          <h3 style={{ marginTop: 20 }}>Level of assessment by class</h3>
+          <p className="muted small">The longest matching start of a PIN's class code wins (Cook "3-14" matches class 3). A blank class covers every class in the county. A property with no class code, or one not listed, uses the county default for its type.</p>
+          <div className="tw">
+            <table className="compact">
+              <thead><tr><th>Class starts with</th><th className="num">Level</th><th>What it covers</th><th /></tr></thead>
+              <tbody>
+                {list.map((r) => edit?.id === r.id ? (
+                  <tr key={r.id}>
+                    <td>{r.class_prefix || "Any class"}</td>
+                    <td className="num"><input aria-label="Level percent" className="num" value={edit.pct} onChange={(e) => setEdit({ ...edit, pct: e.target.value })} style={{ maxWidth: 80 }} /></td>
+                    <td><input aria-label="What it covers" value={edit.label} onChange={(e) => setEdit({ ...edit, label: e.target.value })} /></td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <button className="btn small" onClick={() => void run(async () => { await api(`/admin/class-levels/${r.id}`, { method: "PATCH", body: { levelPercent: edit.pct, label: edit.label } }); setEdit(null); return `Class ${r.class_prefix || "(any)"} saved.`; })}>Save</button>{" "}
+                      <button className="btn small ghost" onClick={() => setEdit(null)}>Cancel</button>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={r.id}>
+                    <td>{r.class_prefix || "Any class"}</td>
+                    <td className="num">{Number(r.level_percent)}%</td>
+                    <td>{r.label}</td>
+                    <td><RowActions label={`class ${r.class_prefix || "(any)"}`} onEdit={() => setEdit({ id: r.id, pct: String(Number(r.level_percent)), label: r.label })}
+                      onDelete={() => run(async () => { await api(`/admin/class-levels/${r.id}`, { method: "DELETE" }); return `Class ${r.class_prefix || "(any)"} removed.`; })} /></td>
+                  </tr>
+                ))}
+                {list.length === 0 && <tr><td colSpan={4} className="meta" style={{ textAlign: "center", padding: 16 }}>No class levels for {c.name} yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="form-row" style={{ alignItems: "flex-end", marginTop: 12 }}>
+            <div className="field"><label htmlFor="r-prefix">Class starts with</label><input id="r-prefix" value={add.prefix} onChange={(e) => setAdd({ ...add, prefix: e.target.value })} placeholder="5 or 5-17" style={{ maxWidth: 120 }} /></div>
+            <div className="field"><label htmlFor="r-pct">Level %</label><input id="r-pct" className="num" value={add.pct} onChange={(e) => setAdd({ ...add, pct: e.target.value })} style={{ maxWidth: 90 }} /></div>
+            <div className="field" style={{ flex: 1, minWidth: 200 }}><label htmlFor="r-label">What it covers</label><input id="r-label" value={add.label} onChange={(e) => setAdd({ ...add, label: e.target.value })} /></div>
+            <button className="btn" disabled={!add.pct || !add.label.trim()} onClick={() => void run(async () => {
+              await api("/admin/class-levels", { method: "POST", body: { countyId: c.id, classPrefix: add.prefix, levelPercent: add.pct, label: add.label } });
+              setAdd({ prefix: "", pct: "", label: "" });
+              return `Class ${add.prefix || "(any)"} added for ${c.name}.`;
+            })}>Add class</button>
+          </div>
+        </>
+      )}
+      {error && <div className="error" role="alert">{error}</div>}
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------- change log
 function describe(c: ChangeRow): string {
   const r = (c.after ?? c.before ?? {}) as Record<string, string | number | null>;
   if (c.table_name === "filing_windows") return `${LEVEL_LABELS[r.level as Level] ?? r.level} window ${r.assessment_year}: ${r.opens_on} to ${r.closes_on}`;
   if (c.table_name === "equalizers") return `Equalizer ${r.year}: ${r.factor}`;
   if (c.table_name === "tax_rates") return `Tax code ${r.tax_code}, ${r.tax_year}: ${r.rate_percent}%`;
+  if (c.table_name === "class_assessment_levels") return `Level of assessment, class ${r.class_prefix || "(any)"}: ${r.level_percent}% (${r.label})`;
+  if (c.table_name === "county_rules") return `Multi-family groups as Residential up to ${r.multifamily_residential_max_units} units`;
   return c.table_name;
 }
 

@@ -5,16 +5,17 @@ import { useSession } from "../App";
 import { useApi, useFirmUsers } from "../data";
 import { fmvFromAv, formatDate, formatMoney, formatValue, nn, reductionPct, splitMatterTitle, titleCase } from "../format";
 import {
-  APPEAL_STATUS_LABELS, LEVELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS,
+  APPEAL_STATUS_LABELS, LEVELS, LEVEL_LABELS, LEVEL_SUBSTAGES, SUBSTAGE_LABELS, assetTypeText,
   type AppealStatus, type Level, type Substage,
 } from "../../../shared/domain";
 import { sumMoney } from "../../../shared/money";
 import type { EffectiveFee } from "../../../shared/fees";
 import { AppealSheet, FeeSheet, PropertySheet, type PropertyRecord } from "../components/forms";
+import { FeeFigures, pct } from "../components/FeeFigures";
 import { ValuesEditor } from "../components/ValuesEditor";
 import { PropertyBilling } from "../components/BillingSheets";
 import { Sheet } from "../components/Sheet";
-import { DeadlinesBlock, DeadlineSheet } from "../components/Deadlines";
+import { DeadlinesBlock, DeadlineSheet, clock } from "../components/Deadlines";
 import { FilesTab } from "../components/Files";
 import { KIND_LABELS, LetterSheet, type LetterSummary } from "../components/DecisionLetter";
 import { uploadDecisionFiles } from "./Decisions";
@@ -33,7 +34,7 @@ export interface AppealRow {
 }
 interface Parcel { id: number; pin: string; alternate_pin: string | null; owner_name: string | null; parcel_type: string; class: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; is_primary: boolean; active: boolean }
 interface Contact { id: number; account_id: number | null; property_id: number | null; name: string; title: string | null; role: string; email: string | null; phone: string | null; mobile: string | null; notes: string | null }
-interface Activity { id: number; kind: string; subject: string; body: string | null; due_on: string | null; status: "open" | "done"; assigned_user_id: number | null; assigned_name: string | null; created_by_name: string | null; created_at: string }
+interface Activity { id: number; kind: string; subject: string; body: string | null; due_on: string | null; start_time?: string | null; end_time?: string | null; location?: string | null; status: "open" | "done"; assigned_user_id: number | null; assigned_name: string | null; created_by_name: string | null; created_at: string }
 export interface DeadlineItem {
   key: string; id: number | null; kind: "hearing" | "evidence" | "filing" | "other" | "window"; title: string; detail: string | null;
   due_on: string; due_time: string | null; location: string | null; notes: string | null; status: "open" | "done";
@@ -53,6 +54,23 @@ interface Detail {
   decisionLetters: PropertyLetter[];
 }
 interface PropertyLetter { id: number; status: "review" | "clean" | "applied"; kind: LetterSummary["kind"]; appealId: number | null; appliedAt: string | null; letterDate: string | null; filedPath: string | null; fileError: string | null; filed: boolean }
+
+/** Where the level of assessment comes from, in a few words under the figure. */
+function levelNote(p: PropertyRecord): string {
+  const s = p.level_source;
+  if (!s) return "";
+  if (s.kind === "manual") return "Set by hand";
+  if (s.kind === "class") return `Class ${s.classCode}`;
+  if (s.kind === "county") return "County rule";
+  return s.classCode ? `Class ${s.classCode} not in the county's list` : "No class code yet";
+}
+function levelTip(p: PropertyRecord): string {
+  const s = p.level_source;
+  if (!s) return "";
+  if (s.kind === "manual") return "Typed on this property. Clear it in Edit matter to follow the class code again.";
+  if (s.kind === "class" || s.kind === "county") return `${s.label ?? ""}. From the county's level of assessment by class (reference data). New appeals start at this level.`;
+  return "Add the PIN's class code on the Parcels tab and the level follows the county's rules. Until then this is the county's default for the asset type.";
+}
 
 type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "billing" | "files";
 const TABS: { id: Tab; label: string; soon?: string }[] = [
@@ -176,7 +194,6 @@ export function Property() {
   if (!data) return null;
   const p = data.property;
   const achieved = sumMoney(appeals.filter((a) => a.status === "reduced" && a.savings && !a.exclude_from_totals).map((a) => a.savings!));
-  const feeText = (f: EffectiveFee) => `${f.percent}%${f.source === "firm" ? "" : ` (${f.source})`}`;
   const now = current;
   const hot = now?.substage === "decision_analysis" && now.days_in_substage > 14;
 
@@ -188,7 +205,7 @@ export function Property() {
           <div className="mgrid">
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-                <div className="eyebrow">Property tax appeal · {titleCase(p.asset_type)} · {p.county} County, {p.state}</div>
+                <div className="eyebrow">Property tax appeal · {assetTypeText(p.asset_type, p.asset_group)} · {p.county} County, {p.state}</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {can("properties.edit") && <button className="btn small secondary" onClick={() => setSheet("edit")}>Edit matter</button>}
                   {can("appeals.edit") && (
@@ -242,7 +259,7 @@ export function Property() {
               <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>
               <div><dt>Analyst</dt><dd>{p.analyst_name ?? "Not assigned"}</dd></div>
               <div><dt>Township</dt><dd>{p.township ?? "Not set"}{p.tax_code ? ` · tax code ${p.tax_code}` : ""}{p.tax_code && !p.tax_code_confirmed ? " (unconfirmed)" : ""}</dd></div>
-              <div><dt>Level of assessment</dt><dd>{p.level_of_assessment ? `${Number(p.level_of_assessment)}%` : "Not set"}</dd></div>
+              <div><dt>Level of assessment</dt><dd title={levelTip(p)}>{p.level_of_assessment ? pct(p.level_of_assessment) : "Not set"}{levelNote(p) && <span className="mn" style={{ display: "block" }}>{levelNote(p)}</span>}</dd></div>
               <div><dt>Current AV</dt><dd className="num">{formatValue(now?.orig_av)}</dd></div>
               <div><dt>Target AV</dt><dd className="num">{formatValue(now?.target_av)}</dd></div>
               <div><dt>Achieved savings</dt><dd className="num" style={{ color: "var(--ok)" }}>{formatMoney(achieved)}</dd></div>
@@ -251,8 +268,9 @@ export function Property() {
               <div className="wide">
                 <dt>Fee</dt>
                 <dd>
-                  {p.no_fee && <span className="pill net">No fee</span>} Assessor and BOR {feeText(data.fees.firstYear)} of first-year savings; PTAB or Court {feeText(data.fees.refund)} of the refund{" "}
-                  {can("fees.edit") && <button className="lk" onClick={() => setSheet("fees")}>Edit</button>}
+                  <FeeFigures firstYear={data.fees.firstYear} refund={data.fees.refund} noFee={data.fees.firstYear.noFee}
+                    flat={p.account_fee_type === "flat" ? p.account_flat_fee : null} cap={p.account_fee_cap} />
+                  {can("fees.edit") && <> <span className="sep" aria-hidden="true">·</span> <button className="lk" onClick={() => setSheet("fees")}>Edit</button></>}
                 </dd>
               </div>
             </dl>
@@ -763,6 +781,7 @@ export function ActivitiesTab({ target, activities, onChanged, showProperty }: {
             <label htmlFor="act-kind">Type</label>
             <select id="act-kind" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })} style={{ minWidth: 110 }}>
               <option value="task">Task</option><option value="note">Note</option><option value="call">Call</option><option value="email">Email</option>
+              <option value="meeting">Meeting</option><option value="reminder">Reminder</option>
             </select>
           </div>
           <div className="field" style={{ flex: 1, minWidth: 220 }}><label htmlFor="act-subject">What</label><input id="act-subject" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} required placeholder="Pull 2026 assessment notice" /></div>
@@ -785,11 +804,12 @@ export function ActivitiesTab({ target, activities, onChanged, showProperty }: {
             <span className="tt">
               <span className="pill" style={{ marginRight: 6 }}>{titleCase(a.kind)}</span>
               {a.subject}
+              {a.location && <span className="meta"> · {a.location}</span>}
               {showProperty && a.property_name && <span className="meta"> · {a.property_name}</span>}
             </span>
             <span className="tm">{a.assigned_name ?? ""}</span>
             <span className="tm num" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {a.due_on ? formatDate(a.due_on) : a.status === "done" ? "Done" : "Open"}
+              {a.due_on ? `${formatDate(a.due_on)}${a.start_time ? `, ${clock(a.start_time)}` : ""}` : a.status === "done" ? "Done" : "Open"}
               {!readOnly && <button className="btn small ghost" onClick={() => void remove(a)} aria-label={`Delete ${a.subject}`}>Delete</button>}
             </span>
           </div>
