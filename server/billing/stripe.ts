@@ -45,6 +45,32 @@ export async function stripe<T = Record<string, unknown>>(method: "GET" | "POST"
   return data;
 }
 
+/**
+ * Stripe's v2 API (JSON bodies, a pinned Stripe-Version). New Connect platforms create each
+ * firm's account with POST /v2/core/accounts and its signup link with /v2/core/account_links;
+ * everything else (Checkout, PaymentIntents, Customers, GET /v1/accounts) stays on v1, which
+ * accepts v2 account ids.
+ */
+export const STRIPE_V2_VERSION = "2026-09-30.endive";
+
+export async function stripeV2<T = Record<string, unknown>>(method: "GET" | "POST", path: string, body: Record<string, unknown> = {}, idempotencyKey?: string): Promise<T> {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new StripeError(0, "not_configured", "Stripe isn't set up on this server.");
+  const res = await fetch(`${stripeApi()}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Stripe-Version": STRIPE_V2_VERSION,
+      "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
+    body: method === "POST" ? JSON.stringify(body) : undefined,
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } } & T;
+  if (!res.ok) throw new StripeError(res.status, data.error?.code ?? null, data.error?.message ?? `Stripe returned ${res.status}`);
+  return data;
+}
+
 /** Checks a webhook's Stripe-Signature header ("t=...,v1=...") against the raw body; refuses anything older than 5 minutes. */
 export function verifyStripeSignature(raw: Buffer, header: string | undefined, secret: string, now = Date.now()): boolean {
   if (!header) return false;

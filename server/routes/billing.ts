@@ -20,7 +20,10 @@ import { invoicePdf, statementPdf } from "../billing/pdf.js";
 import { emailConfigured, escapeHtml, sendEmail, validEmail } from "../billing/email.js";
 import { chargeSaved, firmStripe } from "../billing/payments.js";
 import { addExpenseLines, balances, expenseRows } from "../billing/trust.js";
-import { friendlyStripeError, stripe, stripeConfigured, StripeError } from "../billing/stripe.js";
+import { friendlyStripeError, stripe, stripeConfigured, StripeError, stripeV2 } from "../billing/stripe.js";
+
+/** Same key all day, so a double click makes one account; a later attempt (after a disconnect) can make a new one. */
+const accountKey = (firmId: number) => `acct-v2-${firmId}-${new Date().toISOString().slice(0, 10)}`;
 
 export const billingRouter = Router();
 
@@ -614,17 +617,25 @@ billingRouter.post("/billing/stripe/connect", requireFirmAdmin, async (req, res)
     let acct = await withContext(req.ctx!, (c) => firmStripe(c, firmId));
     if (!acct) {
       const firm = await withContext(req.ctx!, async (c) => (await c.query<{ name: string }>(`SELECT name FROM firms WHERE id = $1`, [firmId])).rows[0]);
-      // The firm's own account: it pays Stripe's fees and carries its own losses, with the full Stripe dashboard.
-      const created = await stripe<{ id: string; livemode: boolean }>("POST", "/v1/accounts", {
-        country: "US", business_profile: { name: firm.name }, metadata: { firm_id: firmId },
-        controller: { fees: { payer: "account" }, losses: { payments: "stripe" }, stripe_dashboard: { type: "full" } },
-      }, null, `acct-${firmId}`);
+      // The firm's own account (Accounts v2): Stripe collects its fees from the firm, Stripe carries
+      // negative balances, the firm gets the full Stripe Dashboard, and signs up on Stripe's pages.
+      const created = await stripeV2<{ id: string; livemode: boolean }>("POST", "/v2/core/accounts", {
+        display_name: firm.name,
+        contact_email: req.auth!.user.email,
+        dashboard: "full",
+        identity: { country: "us", entity_type: "company", business_details: { registered_name: firm.name } },
+        configuration: { merchant: { capabilities: { card_payments: { requested: true }, ach_debit_payments: { requested: true } } } },
+        defaults: { currency: "usd", responsibilities: { fees_collector: "stripe", losses_collector: "stripe" }, locales: ["en-US"] },
+        metadata: { firm_id: String(firmId) },
+        include: ["configuration.merchant", "defaults"],
+      }, accountKey(firmId));
       await withContext(req.ctx!, (c) => c.query(
         `INSERT INTO stripe_accounts (firm_id, stripe_account_id, livemode, business_name, connected_by) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (firm_id) DO NOTHING`,
         [firmId, created.id, created.livemode, firm.name, req.auth!.user.id],
       ));
       acct = { stripe_account_id: created.id, charges_enabled: false };
     }
+    // The signup link stays on v1, which accepts v2 account ids (Stripe's hosted-onboarding guide).
     const link = await stripe<{ url: string }>("POST", "/v1/account_links", {
       account: acct.stripe_account_id, type: "account_onboarding",
       refresh_url: `${base}/settings?tab=billing&stripe=retry`, return_url: `${base}/api/firm/billing/stripe/return`,

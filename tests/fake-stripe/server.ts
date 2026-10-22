@@ -63,11 +63,21 @@ export async function startFakeStripe(port = 0): Promise<FakeStripe> {
   });
   const form = (req: express.Request) => parseForm(typeof req.body === "string" ? req.body : "");
 
-  app.post("/v1/accounts", (req, res) => {
-    const f = form(req) as { metadata?: Record<string, string> };
-    const a = { id: id("acct"), charges_enabled: false, metadata: f.metadata ?? {} };
+  // New platforms must create accounts with Accounts v2; Stripe refuses POST /v1/accounts for them.
+  app.post("/v1/accounts", (_req, res) => {
+    res.status(400).json({ error: { message: "Stripe no longer recommends Accounts v1 for new Connect integrations. Create connected accounts with POST /v2/core/accounts instead." } });
+  });
+  app.post("/v2/core/accounts", (req, res) => {
+    if (req.headers.authorization !== `Bearer ${FAKE_STRIPE_KEY}`) { res.status(401).json({ error: { message: "Invalid API Key provided" } }); return; }
+    state.requests.push(`POST /v2/core/accounts ${req.headers["stripe-version"] ?? ""}`);
+    const b = JSON.parse(String(req.body || "{}"));
+    const ok = req.headers["content-type"]?.includes("application/json") && b.dashboard === "full"
+      && b.defaults?.responsibilities?.fees_collector === "stripe" && b.defaults?.responsibilities?.losses_collector === "stripe"
+      && b.configuration?.merchant?.capabilities?.card_payments?.requested === true && b.identity?.country === "us";
+    if (!ok) { res.status(400).json({ error: { code: "account_creation_invalid", message: "Account creation is invalid." } }); return; }
+    const a = { id: id("acct"), charges_enabled: false, metadata: b.metadata ?? {} };
     state.accounts.set(a.id, a);
-    res.json({ id: a.id, livemode: false });
+    res.json({ id: a.id, object: "v2.core.account", livemode: false, dashboard: "full", applied_configurations: ["merchant"] });
   });
   app.get("/v1/accounts/:id", (req, res) => {
     const a = state.accounts.get(req.params.id);

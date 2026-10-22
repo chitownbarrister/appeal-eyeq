@@ -180,6 +180,8 @@ describe("Stripe", () => {
     expect(back.headers.get("location")).toBe("/settings?tab=billing&stripe=back");
     const s = (await get(dillon, "/api/firm/billing/settings")).body;
     expect(s.stripe).toMatchObject({ charges_enabled: true, payouts_enabled: true });
+    // Created through Accounts v2 (new platforms can't use POST /v1/accounts), with Stripe's version pinned.
+    expect(fake.state.requests).toContain("POST /v2/core/accounts 2026-09-30.endive");
     expect((await pay(tokenOf(link1))).body.online).toBe(true);
   });
 
