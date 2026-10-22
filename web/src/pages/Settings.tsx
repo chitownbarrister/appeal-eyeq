@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useSession } from "../App";
 import { formatDateTime, titleCase } from "../format";
@@ -8,7 +8,7 @@ import { IntegrationsTab } from "../components/Integrations";
 import { DocumentsTab } from "../components/DocumentsSettings";
 import { BillingSettingsTab } from "../components/BillingSettings";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "billing" | "audit" | "sample";
+type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "billing" | "import" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Users" },
@@ -18,6 +18,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "documents", label: "Documents" },
   { id: "billing", label: "Billing" },
   { id: "integrations", label: "Integrations" },
+  { id: "import", label: "Data import" },
   { id: "audit", label: "Audit log" },
 ];
 
@@ -51,6 +52,7 @@ export function Settings() {
       {tab === "documents" && <DocumentsTab />}
       {tab === "billing" && <BillingSettingsTab />}
       {tab === "integrations" && <IntegrationsTab />}
+      {tab === "import" && <ImportTab />}
       {tab === "audit" && <AuditTab />}
       {tab === "sample" && me.firm?.isSample && <SampleTab />}
     </>
@@ -64,6 +66,21 @@ function useCan(permission: string): boolean {
 
 function errorText(err: unknown): string {
   return err instanceof ApiError ? err.message : "Something went wrong.";
+}
+
+// ---------------------------------------------------------------- data import
+function ImportTab() {
+  return (
+    <section className="card pad">
+      <h3 style={{ marginTop: 0 }}>Data import</h3>
+      <p style={{ maxWidth: 640 }}>
+        Bring a firm's data over from the software it used before, open clients and matters in bulk from a spreadsheet, or update appeal values and results
+        for many matters at once. Every import shows each row before anything changes, and can be undone as a whole.
+      </p>
+      <p className="meta" style={{ maxWidth: 640 }}>A firm admin commits a migration or anything that adds clients or properties. Updates to existing matters follow each role's permissions.</p>
+      <Link className="btn" to="/import">Open Import</Link>
+    </section>
+  );
 }
 
 // ---------------------------------------------------------------- users

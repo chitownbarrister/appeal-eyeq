@@ -33,6 +33,7 @@ export function Accounts() {
           <div className="subtitle">{data?.accounts.length ?? 0} clients</div>
         </div>
         <div className="actions">
+          {(can("accounts.edit") || can("properties.edit")) && <Link className="btn secondary" to="/import">Import</Link>}
           {can("accounts.edit") && <button className="btn" onClick={() => setCreating(true)}>+ New client</button>}
         </div>
       </div>

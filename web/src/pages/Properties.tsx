@@ -14,6 +14,7 @@ export interface PropertyRow {
   attorney_user_id: number | null; attorney_name: string | null; analyst_user_id: number | null; analyst_name: string | null;
   pin: string | null; level: Level | null; substage: Substage | null; days_in_substage: number | null; assessment_year: number | null;
   estimated_savings: string | null; next_action: string | null; next_action_on: string | null; no_fee: boolean;
+  co_counsel_firm: string | null; co_counsel_role: "relationship" | "handling" | null;
   unfiled_window_open: boolean; pending_ptab_years: number[]; window_closes_on: string | null; next_title: string | null; next_on: string | null; next_kind: string | null;
 }
 
@@ -85,7 +86,7 @@ export function Properties() {
       type: [...MAIN_ASSET_TYPES.map((v) => [v, `${ASSET_TYPE_LABELS[v]} (all)`]), ["", "──────────", "divider"], ...SPECIALTY_ASSET_TYPES.map((v) => [v, ASSET_TYPE_LABELS[v]])],
       client: uniq(all.map((p) => p.account_name)).map((v) => [v, v]),
       status: ["active", "closed", "inactive", "sold"].map((v) => [v, titleCase(v)]),
-      flag: [["unfiled", "Unfiled, window open"], ["stalled", "Stalled in Decision analysis"], ["pending_ptab", "Pending PTAB"]],
+      flag: [["unfiled", "Unfiled, window open"], ["stalled", "Stalled in Decision analysis"], ["pending_ptab", "Pending PTAB"], ["co_counsel", "Co-counseled"]],
     } as Record<FilterKey, string[][]>;
   }, [all, filters.county, filters.level]);
 
@@ -103,7 +104,7 @@ export function Properties() {
       (!filters.type || ((MAIN_ASSET_TYPES as readonly string[]).includes(filters.type) ? p.asset_group === filters.type : p.asset_type === filters.type)) &&
       (!filters.client || p.account_name === filters.client) &&
       (!filters.status || p.status === filters.status) &&
-      (!filters.flag || (filters.flag === "unfiled" ? p.unfiled_window_open : filters.flag === "pending_ptab" ? p.pending_ptab_years.length > 0 : isStalled(p))) &&
+      (!filters.flag || (filters.flag === "unfiled" ? p.unfiled_window_open : filters.flag === "pending_ptab" ? p.pending_ptab_years.length > 0 : filters.flag === "co_counsel" ? Boolean(p.co_counsel_firm) : isStalled(p))) &&
       (!t || p.title.toLowerCase().includes(t) || p.account_name.toLowerCase().includes(t) || (digits.length >= 4 && (p.pin ?? "").replace(/\D/g, "").includes(digits))),
     );
     const key: Record<SortKey, (p: PropertyRow) => string | number> = {
@@ -130,9 +131,9 @@ export function Properties() {
   );
 
   function exportCsv() {
-    const header = ["Matter", "PIN", "Client", "County", "Township", "Type", "Group", "Use", "Level", "Substage", "Unfiled, window open", "Analyst", "Attorney", "Est. savings", "Next", "Next date"];
+    const header = ["Matter", "PIN", "Client", "Co-counsel", "County", "Township", "Type", "Group", "Use", "Level", "Substage", "Unfiled, window open", "Analyst", "Attorney", "Est. savings", "Next", "Next date"];
     const lines = rows.map((p) => [
-      p.title, p.pin ?? "", p.account_name, p.county, p.township ?? "", typeLabel(p.asset_type), typeLabel(p.asset_group), p.use_type ?? "",
+      p.title, p.pin ?? "", p.account_name, p.co_counsel_firm ?? "", p.county, p.township ?? "", typeLabel(p.asset_type), typeLabel(p.asset_group), p.use_type ?? "",
       p.level ? LEVEL_LABELS[p.level] : "", p.substage ? SUBSTAGE_LABELS[p.substage] : "", p.unfiled_window_open ? "Yes" : "",
       p.analyst_name ?? "", p.attorney_name ?? "", p.estimated_savings ?? "", p.next_title ?? "", p.next_on ?? "",
     ]);
@@ -158,6 +159,7 @@ export function Properties() {
         </div>
         <div className="actions">
           <button className="btn secondary" onClick={exportCsv} disabled={!rows.length}>Export list</button>
+          {(can("properties.edit") || can("appeals.edit")) && <Link className="btn secondary" to="/import">Import</Link>}
           {can("properties.edit") && <button className="btn" onClick={() => setCreating(true)}>+ New property</button>}
         </div>
       </div>
@@ -225,7 +227,12 @@ export function Properties() {
               {rows.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => navigate(`/properties/${p.id}`)}>
                   <td style={{ minWidth: 210 }}>
-                    <MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} />
+                    <span className="cc-row">
+                      <MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} />
+                      {p.co_counsel_firm && (
+                        <span className="cc-mark" title={`Co-counseled with ${p.co_counsel_firm}${p.co_counsel_role ? ` (we're the ${p.co_counsel_role} firm)` : ""}`} aria-label={`Co-counseled with ${p.co_counsel_firm}`}>*</span>
+                      )}
+                    </span>
                     <span className="mn">{p.use_type}{p.no_fee ? " · No fee" : ""}{p.pending_ptab_years.length > 0 && <> <span className="pill net" title={`PTAB appeal${p.pending_ptab_years.length > 1 ? "s" : ""} pending for ${p.pending_ptab_years.join(", ")}`}>PTAB pending</span></>}</span>
                   </td>
                   <td style={{ minWidth: 120 }}>

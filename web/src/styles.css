@@ -838,3 +838,53 @@ button.tg-dh:hover { color: var(--navy); text-decoration: underline; }
 .cc-row { display: inline-flex; gap: 4px; align-items: flex-end; }
 .cc-note { display: block; color: var(--muted); margin-top: 4px; }
 .cc-note b { color: var(--navy); font-weight: 600; }
+
+/* ---------------- import (10d) */
+.imp-purposes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.imp-purpose { position: relative; display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.imp-purpose input { position: absolute; opacity: 0; pointer-events: none; }
+.imp-purpose b { color: var(--navy); font-size: 13.5px; font-weight: 600; }
+.imp-purpose.on { border-color: var(--copper); background: var(--copper-wash); box-shadow: 0 0 0 1px var(--copper) inset; }
+.imp-purpose:focus-within { outline: 2px solid var(--copper); outline-offset: 2px; }
+.imp-drop { padding: 14px 16px; border-radius: var(--r); }
+.imp-drop.small { padding: 8px 12px; margin-top: 8px; }
+.imp-drop.dragging::after { content: "Drop to add these files"; }
+.imp-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--line-2); font-size: 13px; }
+.imp-file .tt { color: var(--navy); font-weight: 500; overflow-wrap: anywhere; }
+.imp-maps { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.imp-maps select { margin-left: 4px; }
+.imp-sheet { border: 1px solid var(--line); border-radius: var(--r); margin-top: 8px; background: var(--card); }
+.imp-sheet.skip { background: var(--hover); }
+.imp-sheet > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; cursor: pointer; list-style: none; font-size: 13px; }
+.imp-sheet > summary::-webkit-details-marker { display: none; }
+.imp-sheet > summary::before { content: "▸"; color: var(--faint); font-size: 11px; }
+.imp-sheet[open] > summary::before { content: "▾"; }
+.imp-sheet > summary .tt { color: var(--navy); font-weight: 500; overflow-wrap: anywhere; }
+.imp-sheet > summary select { max-width: 100%; }
+.imp-sheet .tw { border-top: 1px solid var(--line-2); }
+.imp-cols select { max-width: 220px; }
+.imp-cols .req { color: var(--copper-ink); font-weight: 700; }
+.imp-sample { max-width: 280px; overflow-wrap: anywhere; }
+.imp-opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.imp-opts fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.imp-opts legend { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.imp-opts .check { align-items: flex-start; }
+.imp-opts .check input { margin-top: 2px; }
+.imp-go { display: flex; gap: 12px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.imp-summary th[scope="row"] { text-align: left; font-weight: 500; color: var(--navy); text-transform: none; letter-spacing: 0; font-size: 13px; }
+.imp-summary .lk { font-size: 13px; }
+.lk.bad { color: var(--crit); }
+.imp-filter { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0 6px; }
+.imp-rows { list-style: none; margin: 0 0 10px; padding: 0; }
+.imp-rows li { padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: 12.5px; min-width: 0; }
+.imp-row-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.imp-label { color: var(--navy); font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.imp-msg { color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.imp-msg.bad { color: var(--crit); }
+.imp-changes { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 3px; color: var(--ink); overflow-wrap: anywhere; }
+.imp-commit { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); }
+.imp-bar { height: 8px; border-radius: 4px; background: var(--line-2); margin: 10px 0 6px; overflow: hidden; }
+.imp-bar span { display: block; height: 100%; background: var(--copper); transition: width 0.4s ease; }
+@media (max-width: 900px) {
+  .imp-purposes, .imp-opts { grid-template-columns: minmax(0, 1fr); }
+}

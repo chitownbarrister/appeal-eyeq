@@ -108,7 +108,7 @@ mattersRouter.get("/properties", async (req, res) => {
        SELECT p.id, p.name, p.address1, p.city, p.state, p.zip, p.status, p.asset_type, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_group, p.units, p.use_type, p.tax_code,
               co.name AS county, t.name AS township, p.account_id, ac.name AS account_name,
               p.attorney_user_id, att.name AS attorney_name, p.analyst_user_id, ana.name AS analyst_name,
-              pp.pin, p.no_fee,
+              pp.pin, p.no_fee, p.co_counsel_firm, p.co_counsel_role,
               cur.id AS appeal_id, cur.level, cur.substage, cur.status AS appeal_status, cur.assessment_year,
               GREATEST(0, EXTRACT(day FROM now() - cur.substage_since))::int AS days_in_substage,
               cur.orig_av AS current_av, cur.target_av, cur.estimated_savings, cur.next_action, cur.next_action_on,

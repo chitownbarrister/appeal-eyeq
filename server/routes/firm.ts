@@ -18,6 +18,7 @@ import { billingRouter } from "./billing.js";
 import { trustRouter } from "./trust.js";
 import { billingDesignRouter } from "./billing-design.js";
 import { evaluationRouter } from "./evaluation.js";
+import { importsRouter } from "./imports.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
@@ -31,6 +32,7 @@ firmRouter.use(billingRouter);
 firmRouter.use(trustRouter);
 firmRouter.use(billingDesignRouter);
 firmRouter.use(evaluationRouter);
+firmRouter.use(importsRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

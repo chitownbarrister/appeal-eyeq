@@ -16,6 +16,7 @@ import { Accounts } from "./pages/Accounts";
 import { Account } from "./pages/Account";
 import { Calendar } from "./pages/Calendar";
 import { Decisions } from "./pages/Decisions";
+import { Import } from "./pages/Import";
 import { setValueCents } from "./format";
 
 interface Session {
@@ -119,6 +120,7 @@ function FirmApp() {
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/decisions" element={<Decisions />} />
             <Route path="/billing" element={<Billing />} />
+            <Route path="/import" element={<Import />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<MyAccount />} />
             {me.user.isSuperAdmin && <Route path="/admin" element={<Admin />} />}

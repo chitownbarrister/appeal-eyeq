@@ -49,6 +49,7 @@ export function createApp(): express.Express {
     // File uploads send the raw file. Browsers preflight a cross-site octet-stream POST, which this server never approves.
     if (req.method === "POST" && /^\/firm\/properties\/\d+\/files\/upload$/.test(req.path) && req.is("application/octet-stream")) return next();
     if (req.method === "POST" && req.path === "/firm/decisions/upload" && req.is("application/octet-stream")) return next();
+    if (req.method === "POST" && /^\/firm\/imports\/\d+\/files$/.test(req.path) && req.is("application/octet-stream")) return next();
     if (!req.is("application/json")) {
       res.status(415).json({ error: "Send JSON." });
       return;
