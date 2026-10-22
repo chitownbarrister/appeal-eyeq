@@ -12,6 +12,7 @@ import { sumMoney } from "../../../shared/money";
 import type { EffectiveFee } from "../../../shared/fees";
 import { AppealSheet, FeeSheet, PropertySheet, type PropertyRecord } from "../components/forms";
 import { FeeFigures, pct } from "../components/FeeFigures";
+import { EvaluationTab } from "../components/Evaluation";
 import { ValuesEditor } from "../components/ValuesEditor";
 import { PropertyBilling } from "../components/BillingSheets";
 import { Sheet } from "../components/Sheet";
@@ -72,9 +73,9 @@ function levelTip(p: PropertyRecord): string {
   return "Add the PIN's class code on the Parcels tab and the level follows the county's rules. Until then this is the county's default for the asset type.";
 }
 
-type Tab = "appeals" | "values" | "parcels" | "contacts" | "activities" | "billing" | "files";
+type Tab = "appeals" | "values" | "evaluation" | "parcels" | "contacts" | "activities" | "billing" | "files";
 const TABS: { id: Tab; label: string; soon?: string }[] = [
-  { id: "appeals", label: "Appeals" }, { id: "values", label: "Values" }, { id: "parcels", label: "Parcels" },
+  { id: "appeals", label: "Appeals" }, { id: "values", label: "Values" }, { id: "evaluation", label: "Evaluation" }, { id: "parcels", label: "Parcels" },
   { id: "contacts", label: "Contacts" }, { id: "activities", label: "Activities" },
   { id: "billing", label: "Billing" }, { id: "files", label: "Files" },
 ];
@@ -88,7 +89,7 @@ export function Property() {
   const { can } = useSession();
   const { data, error, reload } = useApi<Detail>(`/firm/properties/${id}`);
   const accounts = useApi<{ accounts: { id: number; name: string }[] }>("/firm/accounts");
-  const [tab, setTab] = useState<Tab>(params.get("tab") === "files" ? "files" : params.get("appeal") ? "values" : "appeals");
+  const [tab, setTab] = useState<Tab>(params.get("tab") === "files" ? "files" : params.get("tab") === "evaluation" ? "evaluation" : params.get("appeal") ? "values" : "appeals");
   // A link from search to a document opens the Files tab at that file, even when this page is already open.
   const askedTab = params.get("tab");
   const askedFile = params.get("file");
@@ -314,6 +315,7 @@ export function Property() {
           {tab === "contacts" && <ContactsTab propertyId={p.id} accountId={p.account_id} contacts={data.contacts} canEdit={can("accounts.edit")} onChanged={() => void refreshAll()} />}
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
           {tab === "billing" && <PropertyBilling propertyId={p.id} />}
+          {tab === "evaluation" && <EvaluationTab key={`${p.id}:${appeals.length}`} propertyId={p.id} />}
           {tab === "files" && <FilesTab key={`${p.id}:${askedFile ?? ""}`} propertyId={p.id} propertyStatus={p.status} canEdit={can("properties.edit")} initialPath={params.get("path") ?? ""} initialFile={askedFile} />}
         </div>
       </section>

@@ -196,6 +196,8 @@ const PropertyFields = {
   purchasePrice: money.nullable().optional(),
   yearBuilt: z.coerce.number().int().min(1700).max(2100).nullable().optional(),
   buildingSqft: z.coerce.number().int().min(0).nullable().optional(),
+  rentableSqft: z.coerce.number().int().min(0).nullable().optional(),
+  landSqft: z.coerce.number().int().min(0).nullable().optional(),
   units: z.coerce.number().int().min(0).nullable().optional(),
   acreage: z.union([z.string(), z.number()]).transform(String).pipe(z.string().regex(/^\d{1,6}(\.\d{1,4})?$/)).nullable().optional(),
   notes: optText(4000),
@@ -236,8 +238,8 @@ mattersRouter.post("/properties", requirePermission("properties.edit"), async (r
       `INSERT INTO properties (firm_id, account_id, name, address1, address2, city, state, zip, county_id, township_id, tax_code,
                                tax_code_confirmed, asset_type, use_type, level_of_assessment, attorney_user_id, analyst_user_id,
                                status, purchase_date, purchase_price, year_built, building_sqft, units, acreage, notes,
-                               loa_manual, asset_group_override)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,COALESCE($18,'active'),$19,$20,$21,$22,$23,$24,$25,$26,$27)
+                               loa_manual, asset_group_override, rentable_sqft, land_sqft)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,COALESCE($18,'active'),$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
        RETURNING id`,
       [
         firmId, accountId, d.name || d.address1, d.address1, d.address2 ?? null, d.city, d.state, d.zip ?? null, d.countyId,
@@ -245,6 +247,7 @@ mattersRouter.post("/properties", requirePermission("properties.edit"), async (r
         d.levelOfAssessment ?? null, d.attorneyUserId ?? null, d.analystUserId ?? null,
         d.status ?? null, d.purchaseDate ?? null, d.purchasePrice ?? null, d.yearBuilt ?? null, d.buildingSqft ?? null,
         d.units ?? null, d.acreage ?? null, d.notes ?? null, d.levelOfAssessment != null, d.assetGroupOverride ?? null,
+        d.rentableSqft ?? null, d.landSqft ?? null,
       ],
     )).rows[0];
     await c.query(
@@ -375,6 +378,11 @@ const UpdateProperty = z.object(PropertyFields).partial().extend({
   noFee: z.boolean().optional(),
   feePercentFirstYear: percentVal.nullable().optional(),
   feePercentRefund: percentVal.nullable().optional(),
+  // Co-counsel on this property; the whole set is saved together, or cleared with coCounselFirm: null.
+  coCounselFirm: optText(200),
+  coCounselRole: z.enum(["relationship", "handling"]).nullable().optional(),
+  coCounselPercent: percentVal.nullable().optional(),
+  coCounselBills: z.enum(["us", "co_counsel"]).nullable().optional(),
 }).strict();
 
 const PROPERTY_COLUMNS: Record<string, string> = {
@@ -384,8 +392,11 @@ const PROPERTY_COLUMNS: Record<string, string> = {
   analystUserId: "analyst_user_id", status: "status", purchaseDate: "purchase_date", purchasePrice: "purchase_price",
   yearBuilt: "year_built", buildingSqft: "building_sqft", units: "units", acreage: "acreage", notes: "notes",
   accountId: "account_id", noFee: "no_fee", feePercentFirstYear: "fee_percent_first_year", feePercentRefund: "fee_percent_refund",
+  rentableSqft: "rentable_sqft", landSqft: "land_sqft",
+  coCounselFirm: "co_counsel_firm", coCounselRole: "co_counsel_role", coCounselPercent: "co_counsel_percent", coCounselBills: "co_counsel_bills",
 };
-const FEE_FIELDS = ["noFee", "feePercentFirstYear", "feePercentRefund"];
+const FEE_FIELDS = ["noFee", "feePercentFirstYear", "feePercentRefund", "coCounselFirm", "coCounselRole", "coCounselPercent", "coCounselBills"];
+const CO_COUNSEL = ["coCounselFirm", "coCounselRole", "coCounselPercent", "coCounselBills"] as const;
 
 mattersRouter.patch("/properties/:id", requirePermission("properties.edit"), async (req, res) => {
   const pid = idParam(req);
@@ -401,6 +412,15 @@ mattersRouter.patch("/properties/:id", requirePermission("properties.edit"), asy
     }
   }
   if (!changes.length) return bad(res, "Nothing to change.");
+  // Co-counsel is saved as a set: a firm and our role together, or nothing at all.
+  const cc = parsed.data;
+  if (CO_COUNSEL.some((k) => cc[k] !== undefined)) {
+    if (cc.coCounselFirm === undefined) return bad(res, "Save co-counsel with the firm's name.");
+    if (cc.coCounselFirm === null) {
+      for (const k of CO_COUNSEL.slice(1)) if (cc[k] !== undefined && cc[k] !== null) return bad(res, "Clear the co-counsel firm and its terms together.");
+      for (const k of CO_COUNSEL.slice(1)) if (cc[k] === undefined) changes.push([k, null]);
+    } else if (!cc.coCounselRole) return bad(res, "Say whether your firm is the relationship firm or the handling firm.");
+  }
   const sets = changes.map(([k], i) => `${PROPERTY_COLUMNS[k]} = $${i + 3}`);
   // A typed level of assessment is kept as typed; clearing it hands it back to the class code.
   if (parsed.data.levelOfAssessment !== undefined) sets.push(`loa_manual = ${parsed.data.levelOfAssessment === null ? "false" : "true"}`);
@@ -970,6 +990,7 @@ mattersRouter.get("/accounts/:id", async (req, res) => {
           ORDER BY a.property_id, a.assessment_year DESC, ${LEVEL_ORDER} DESC
        )
        SELECT p.id, p.name, p.address1, p.city, p.state, p.status, p.asset_type, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_group, co.name AS county, t.name AS township,
+              p.co_counsel_firm, p.co_counsel_role,
               (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin,
               cur.level, cur.substage
          FROM properties p JOIN counties co ON co.id = p.county_id LEFT JOIN townships t ON t.id = p.township_id

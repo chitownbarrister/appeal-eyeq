@@ -14,7 +14,7 @@ import { ClientBilling } from "../components/BillingSheets";
 
 interface AccountDetail {
   account: AccountRecord & { rep_name: string | null };
-  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; asset_group: string; level: Level | null; substage: Substage | null }[];
+  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; asset_group: string; co_counsel_firm?: string | null; co_counsel_role?: "relationship" | "handling" | null; level: Level | null; substage: Substage | null }[];
   savings: { assessment_year: number; savings: string }[];
   activeAppeals: number;
   contacts: Parameters<typeof ContactsTab>[0]["contacts"];
@@ -39,6 +39,7 @@ export function Account() {
   const a = data.account;
   const feeLine = (f: EffectiveFee) => `${f.percent}%${f.source === "account" ? "" : " (firm default)"}`;
   const props = data.properties.filter((p) => !status || p.status === status);
+  const coCounseled = data.properties.filter((p) => p.co_counsel_firm);
 
   return (
     <>
@@ -54,6 +55,11 @@ export function Account() {
               {a.source && <span>Source {a.source}</span>}
               {a.email && <span style={{ userSelect: "all" }}>{a.email}</span>}
               {a.phone && <span>{a.phone}</span>}
+              {coCounseled.length > 0 && (
+                <span className="pill net" title={coCounseled.map((p) => `${p.title}: with ${p.co_counsel_firm} (we're the ${p.co_counsel_role} firm)`).join("\n")}>
+                  Co-counseled · {coCounseled.length} propert{coCounseled.length === 1 ? "y" : "ies"} with {[...new Set(coCounseled.map((p) => p.co_counsel_firm))].join(", ")}
+                </span>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

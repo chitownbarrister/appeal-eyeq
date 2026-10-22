@@ -19,7 +19,8 @@ export interface PropertyRecord {
   multifamily_max_units?: number | null;
   attorney_user_id: number | null;
   analyst_user_id: number | null; status: string; purchase_date: string | null; purchase_price: string | null; year_built: number | null;
-  building_sqft: number | null; units: number | null; acreage: string | null; notes: string | null; no_fee: boolean;
+  building_sqft: number | null; rentable_sqft?: number | null; land_sqft?: number | null; units: number | null; acreage: string | null; notes: string | null; no_fee: boolean;
+  co_counsel_firm?: string | null; co_counsel_role?: "relationship" | "handling" | null; co_counsel_percent?: string | null; co_counsel_bills?: "us" | "co_counsel" | null;
   fee_percent_first_year: string | null; fee_percent_refund: string | null;
 }
 
@@ -74,7 +75,7 @@ export function PropertySheet({
     levelOfAssessment: existing?.loa_manual ? str(existing?.level_of_assessment) : "",
     attorneyUserId: str(existing?.attorney_user_id), analystUserId: str(existing?.analyst_user_id), status: existing?.status ?? "active",
     purchaseDate: str(existing?.purchase_date), purchasePrice: str(existing?.purchase_price), yearBuilt: str(existing?.year_built),
-    buildingSqft: str(existing?.building_sqft), units: str(existing?.units), acreage: str(existing?.acreage), notes: str(existing?.notes),
+    buildingSqft: str(existing?.building_sqft), rentableSqft: str(existing?.rentable_sqft), landSqft: str(existing?.land_sqft), units: str(existing?.units), acreage: str(existing?.acreage), notes: str(existing?.notes),
     startAppeal: !existing, appealYear: String(thisYear), appealLevel: "assessor" as Level,
   });
   const [busy, setBusy] = useState(false);
@@ -103,7 +104,7 @@ export function PropertySheet({
       useType: nn(f.useType), levelOfAssessment: nn(cleanNumber(f.levelOfAssessment)),
       attorneyUserId: f.attorneyUserId ? Number(f.attorneyUserId) : null, analystUserId: f.analystUserId ? Number(f.analystUserId) : null,
       purchaseDate: nn(f.purchaseDate), purchasePrice: nn(cleanNumber(f.purchasePrice)), yearBuilt: intOrNull(f.yearBuilt),
-      buildingSqft: intOrNull(f.buildingSqft), units: intOrNull(f.units), acreage: nn(cleanNumber(f.acreage)), notes: nn(f.notes),
+      buildingSqft: intOrNull(f.buildingSqft), rentableSqft: intOrNull(f.rentableSqft), landSqft: intOrNull(f.landSqft), units: intOrNull(f.units), acreage: nn(cleanNumber(f.acreage)), notes: nn(f.notes),
     };
     try {
       if (existing) {
@@ -241,9 +242,12 @@ export function PropertySheet({
         <div className="fld"><label htmlFor="pf-pd">Purchase date</label><input id="pf-pd" type="date" className="in" value={f.purchaseDate} onChange={set("purchaseDate")} /></div>
         <div className="fld"><label htmlFor="pf-pp">Purchase price</label><input id="pf-pp" className="in num" value={f.purchasePrice} onChange={set("purchasePrice")} inputMode="decimal" /></div>
         <div className="fld"><label htmlFor="pf-yb">Year built</label><input id="pf-yb" className="in num" value={f.yearBuilt} onChange={set("yearBuilt")} inputMode="numeric" /></div>
-        <div className="fld"><label htmlFor="pf-sf">Building sq ft</label><input id="pf-sf" className="in num" value={f.buildingSqft} onChange={set("buildingSqft")} inputMode="numeric" /></div>
+        <div className="fld"><label htmlFor="pf-sf">Building sq ft (gross)</label><input id="pf-sf" className="in num" value={f.buildingSqft} onChange={set("buildingSqft")} inputMode="numeric" /></div>
+        <div className="fld"><label htmlFor="pf-rsf">Rentable sq ft</label><input id="pf-rsf" className="in num" value={f.rentableSqft} onChange={set("rentableSqft")} inputMode="numeric" /></div>
         <div className="fld"><label htmlFor="pf-units">Units</label><input id="pf-units" className="in num" value={f.units} onChange={set("units")} inputMode="numeric" required={f.assetType === "multifamily" && !f.groupOverride} /></div>
         <div className="fld"><label htmlFor="pf-acres">Acreage</label><input id="pf-acres" className="in num" value={f.acreage} onChange={set("acreage")} inputMode="decimal" /></div>
+        <div className="fld"><label htmlFor="pf-lsf">Land sq ft</label><input id="pf-lsf" className="in num" value={f.landSqft} onChange={set("landSqft")} inputMode="numeric"
+          placeholder={f.acreage && !f.landSqft ? `${Math.round(Number(cleanNumber(f.acreage)) * 43560).toLocaleString("en-US")} (from acreage)` : ""} /></div>
         <div className="fld span2"><label htmlFor="pf-notes">Notes</label><textarea id="pf-notes" className="in" value={f.notes} onChange={set("notes")} /></div>
       </div>
       {!existing && (
@@ -390,7 +394,11 @@ export function FeeSheet({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [f, setF] = useState({ noFee: property.no_fee, firstYear: str(property.fee_percent_first_year), refund: str(property.fee_percent_refund) });
+  const [f, setF] = useState({
+    noFee: property.no_fee, firstYear: str(property.fee_percent_first_year), refund: str(property.fee_percent_refund),
+    ccOn: Boolean(property.co_counsel_firm), ccFirm: str(property.co_counsel_firm), ccRole: property.co_counsel_role ?? "relationship",
+    ccPercent: str(property.co_counsel_percent), ccBills: property.co_counsel_bills ?? "",
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function save() {
@@ -399,7 +407,12 @@ export function FeeSheet({
     try {
       await api(`/firm/properties/${property.id}`, {
         method: "PATCH",
-        body: { noFee: f.noFee, feePercentFirstYear: nn(cleanNumber(f.firstYear)), feePercentRefund: nn(cleanNumber(f.refund)) },
+        body: {
+          noFee: f.noFee, feePercentFirstYear: nn(cleanNumber(f.firstYear)), feePercentRefund: nn(cleanNumber(f.refund)),
+          ...(f.ccOn
+            ? { coCounselFirm: f.ccFirm.trim(), coCounselRole: f.ccRole, coCounselPercent: nn(cleanNumber(f.ccPercent)), coCounselBills: f.ccBills || null }
+            : property.co_counsel_firm ? { coCounselFirm: null } : {}),
+        },
       });
       onSaved();
     } catch (err) {
@@ -409,11 +422,33 @@ export function FeeSheet({
     }
   }
   return (
-    <Sheet eyebrow="Fee terms" title={property.name} onClose={onClose} onSubmit={() => void save()} footer={<SaveFooter busy={busy} label="Save fee terms" onClose={onClose} error={error} />}>
+    <Sheet eyebrow="Fee terms and co-counsel" title={property.name} onClose={onClose} onSubmit={() => void save()} footer={<SaveFooter busy={busy} label="Save fee terms" onClose={onClose} error={error} />}>
       <p className="meta" style={{ marginTop: 0 }}>Leave a percent blank to use the client's terms, or the firm default if the client has none. A single appeal can still carry its own percent.</p>
       <label className="check" style={{ marginBottom: 14 }}><input type="checkbox" checked={f.noFee} onChange={(e) => setF({ ...f, noFee: e.target.checked })} /> No fee property (fees are shown as waived, never invoiced)</label>
       <div className="fld"><label htmlFor="fs-fy">Assessor and BOR %</label><input id="fs-fy" className="in num" value={f.firstYear} onChange={(e) => setF({ ...f, firstYear: e.target.value })} placeholder={`${inherited.firstYear} (inherited)`} inputMode="decimal" /><span className="hint">Of first-year projected tax savings, billed when the decision arrives</span></div>
       <div className="fld"><label htmlFor="fs-rf">PTAB and Circuit Court %</label><input id="fs-rf" className="in num" value={f.refund} onChange={(e) => setF({ ...f, refund: e.target.value })} placeholder={`${inherited.refund} (inherited)`} inputMode="decimal" /><span className="hint">Of the refund check</span></div>
+      <h3 style={{ marginTop: 18 }}>Co-counsel</h3>
+      <label className="check" style={{ marginBottom: 10 }}><input type="checkbox" checked={f.ccOn} onChange={(e) => setF({ ...f, ccOn: e.target.checked })} /> This property is co-counseled with another firm</label>
+      {f.ccOn && (
+        <>
+          <div className="fld"><label htmlFor="fs-ccf">Co-counsel firm</label><input id="fs-ccf" className="in" value={f.ccFirm} onChange={(e) => setF({ ...f, ccFirm: e.target.value })} required maxLength={200} /></div>
+          <div className="fld">
+            <label htmlFor="fs-ccr">Our firm is the</label>
+            <select id="fs-ccr" className="in" value={f.ccRole} onChange={(e) => setF({ ...f, ccRole: e.target.value as "relationship" | "handling" })}>
+              <option value="relationship">Relationship firm (we hold the client)</option>
+              <option value="handling">Handling firm (we do the work for their client)</option>
+            </select>
+          </div>
+          <div className="fld"><label htmlFor="fs-ccp">Co-counsel's share of the fee %</label><input id="fs-ccp" className="in num" value={f.ccPercent} onChange={(e) => setF({ ...f, ccPercent: e.target.value })} inputMode="decimal" placeholder="50" /><span className="hint">The other firm's part. The Evaluation tab shows their share and our net fee.</span></div>
+          <div className="fld">
+            <label htmlFor="fs-ccb">Who bills the client</label>
+            <select id="fs-ccb" className="in" value={f.ccBills} onChange={(e) => setF({ ...f, ccBills: e.target.value })}>
+              <option value="">Not set</option><option value="us">We do</option><option value="co_counsel">Co-counsel does</option>
+            </select>
+          </div>
+          <p className="meta">The client's written consent to the split belongs in the property's files (Illinois Rule 1.5(e)). Sharing the matter with a firm on Appeal EyeQ comes in a later delivery.</p>
+        </>
+      )}
     </Sheet>
   );
 }
