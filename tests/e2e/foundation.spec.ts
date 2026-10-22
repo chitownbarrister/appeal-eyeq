@@ -23,7 +23,7 @@ test("an attorney signs in and sees the sample dashboard with exact figures", as
   await expect(page.getByText("$274,084.32")).toBeVisible();
   await expect(page.getByText("$2,290.20")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Settings" })).toHaveCount(0);
-  for (const label of ["Dashboard", "Properties", "Accounts", "Calendar", "Decisions", "Billing"]) {
+  for (const label of ["Dashboard", "Properties", "Clients", "Calendar", "Decisions", "Billing"]) {
     await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: label })).toBeVisible();
   }
   await page.screenshot({ path: "test-results/dashboard.png", fullPage: true });

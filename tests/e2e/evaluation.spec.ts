@@ -61,6 +61,9 @@ test("co-counsel on a property: terms, share and net fee, and the client's tag",
   await s.getByRole("button", { name: "Save fee terms" }).click();
   await expect(s).toHaveCount(0);
 
+  // Noted beside the fee terms, details on the Evaluation tab.
+  await expect(page.locator("dl.facts .cc-note")).toHaveText("*Co-counsel Lakeshore Tax Partners · 30% of the fee");
+  await page.screenshot({ path: "test-results/fee-co-counsel.png" });
   await page.getByRole("tab", { name: "Evaluation" }).click();
   await expect(page.locator(".ev-facts")).toContainText("Lakeshore Tax Partners · we're the relationship firm · their share 30% · we bill");
   const summary = page.getByRole("table", { name: "Summary by assessment year" });
@@ -68,7 +71,9 @@ test("co-counsel on a property: terms, share and net fee, and the client's tag",
   await expect(summary.getByRole("rowheader", { name: "Our net fee" })).toBeVisible();
 
   await page.getByRole("link", { name: "Sheridan Shore Apartments LP" }).first().click();
-  await expect(page.getByText("Co-counseled · 1 property with Lakeshore Tax Partners")).toBeVisible();
+  await expect(page.getByText("*Co-counseled · 1 property with Lakeshore Tax Partners")).toBeVisible();
+  await expect(page.locator("tr", { hasText: "1300 Sheridan Rd." }).getByLabel("Co-counseled with Lakeshore Tax Partners")).toHaveText("*");
+  await page.screenshot({ path: "test-results/client-co-counsel.png" });
 
   // Back to how it was, for the specs after this one.
   expect((await page.request.patch(`/api/firm/properties/${sheridan}`, { data: { coCounselFirm: null } })).ok()).toBe(true);

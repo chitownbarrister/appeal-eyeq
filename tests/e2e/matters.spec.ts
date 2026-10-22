@@ -113,7 +113,7 @@ test("creating a property with a new client, then finding it with global search"
 
 test("clients list and client page", async ({ page }) => {
   await signIn(page);
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Accounts" }).click();
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Clients" }).click();
   await expect(page.getByRole("heading", { name: "Clients", level: 1 })).toBeVisible();
   await page.getByRole("link", { name: "Prairie Crossing Industrial LLC" }).click();
   await expect(page.getByText("Custom: 30% at all levels")).toBeHidden();
@@ -130,7 +130,7 @@ test("when the session ends while a page is open, the app returns to sign-in wit
   // Let the page's own loads (the summary strip) finish, so only the click below meets the ended session.
   await page.waitForLoadState("networkidle");
   await page.request.post("/api/auth/logout", { data: {} });
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Accounts" }).click();
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Clients" }).click();
   await expect(page.getByText("Your session ended, so you've been signed out.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });

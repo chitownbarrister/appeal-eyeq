@@ -28,7 +28,7 @@ export function Accounts() {
     <>
       <div className="page-head">
         <div>
-          <div className="eyebrow">Accounts</div>
+          <div className="eyebrow">Clients</div>
           <h1>Clients</h1>
           <div className="subtitle">{data?.accounts.length ?? 0} clients</div>
         </div>

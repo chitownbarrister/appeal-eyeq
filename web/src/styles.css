@@ -832,3 +832,9 @@ button.tg-dh:hover { color: var(--navy); text-decoration: underline; }
 .ev-table th[scope="row"] { text-transform: none; letter-spacing: 0; font-size: 13px; border-bottom: 1px solid var(--line-2); }
 .ev-table tr.strong th[scope="row"] { font-weight: 600; }
 .ev-pins td.num, .ev-pins th.num { min-width: 92px; }
+
+/* ---------------- co-counsel marks (after 10b) */
+.cc-mark { color: var(--copper-ink); font-weight: 700; margin-right: 2px; }
+.cc-row { display: inline-flex; gap: 4px; align-items: flex-end; }
+.cc-note { display: block; color: var(--muted); margin-top: 4px; }
+.cc-note b { color: var(--navy); font-weight: 600; }

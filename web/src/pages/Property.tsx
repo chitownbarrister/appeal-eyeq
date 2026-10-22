@@ -224,7 +224,7 @@ export function Property() {
               <div className="dmeta">
                 <span>Client <Link to={`/accounts/${p.account_id}`}>{p.account_name}</Link></span>
                 {data.parcels[0]?.owner_name && <span>Owner of record <b>{data.parcels[0].owner_name}</b></span>}
-                <span><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span> {p.status === "active" ? "Open until the property is sold or the engagement ends" : ""}</span>
+                <span><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></span>
                 {p.no_fee && <span className="pill net">No fee property</span>}
               </div>
               {data.pendingPtab.length > 0 && (
@@ -272,6 +272,11 @@ export function Property() {
                   <FeeFigures firstYear={data.fees.firstYear} refund={data.fees.refund} noFee={data.fees.firstYear.noFee}
                     flat={p.account_fee_type === "flat" ? p.account_flat_fee : null} cap={p.account_fee_cap} />
                   {can("fees.edit") && <> <span className="sep" aria-hidden="true">·</span> <button className="lk" onClick={() => setSheet("fees")}>Edit</button></>}
+                  {p.co_counsel_firm && (
+                    <span className="cc-note" title={`Co-counseled with ${p.co_counsel_firm}: we're the ${p.co_counsel_role === "handling" ? "handling" : "relationship"} firm${p.co_counsel_bills ? `, ${p.co_counsel_bills === "us" ? "we bill the client" : "they bill the client"}` : ""}. Details on the Evaluation tab.`}>
+                      <span className="cc-mark" aria-hidden="true">*</span>Co-counsel <b>{p.co_counsel_firm}</b>{p.co_counsel_percent ? <> · <b className="num">{pct(p.co_counsel_percent)}</b> of the fee</> : null}
+                    </span>
+                  )}
                 </dd>
               </div>
             </dl>

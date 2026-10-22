@@ -10,7 +10,7 @@ import { UserMenu } from "./UserMenu";
 const FIRM_NAV = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/properties", label: "Properties" },
-  { to: "/accounts", label: "Accounts" },
+  { to: "/accounts", label: "Clients" },
   { to: "/calendar", label: "Calendar" },
   { to: "/decisions", label: "Decisions" },
   { to: "/billing", label: "Billing" },

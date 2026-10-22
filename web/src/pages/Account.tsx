@@ -57,7 +57,7 @@ export function Account() {
               {a.phone && <span>{a.phone}</span>}
               {coCounseled.length > 0 && (
                 <span className="pill net" title={coCounseled.map((p) => `${p.title}: with ${p.co_counsel_firm} (we're the ${p.co_counsel_role} firm)`).join("\n")}>
-                  Co-counseled · {coCounseled.length} propert{coCounseled.length === 1 ? "y" : "ies"} with {[...new Set(coCounseled.map((p) => p.co_counsel_firm))].join(", ")}
+                  <span className="cc-mark" aria-hidden="true">*</span>Co-counseled · {coCounseled.length} propert{coCounseled.length === 1 ? "y" : "ies"} with {[...new Set(coCounseled.map((p) => p.co_counsel_firm))].join(", ")}
                 </span>
               )}
             </div>
@@ -97,7 +97,12 @@ export function Account() {
                   <tbody>
                     {props.map((p) => (
                       <tr key={p.id} className="clickable" onClick={() => navigate(`/properties/${p.id}`)}>
-                        <td><MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} /></td>
+                        <td>
+                          <span className="cc-row">
+                            <MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} />
+                            {p.co_counsel_firm && <span className="cc-mark" title={`Co-counseled with ${p.co_counsel_firm}`} aria-label={`Co-counseled with ${p.co_counsel_firm}`}>*</span>}
+                          </span>
+                        </td>
                         <td>{p.county}</td><td>{p.township}</td>
                         <td><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></td>
                         <td>{assetTypeText(p.asset_type, p.asset_group)}</td>
