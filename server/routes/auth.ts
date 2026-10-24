@@ -55,7 +55,7 @@ authRouter.get("/me", async (req, res) => {
     return;
   }
   const u = auth.user;
-  let firm: { id: number; name: string; isSample: boolean } | null = null;
+  let firm: { id: number; name: string; isSample: boolean; logoAt?: string | null } | null = null;
   let acting: { firmId: number; firmName: string; grantExpiresAt: string } | null = null;
   let permissions: string[] = [];
 
@@ -69,6 +69,8 @@ authRouter.get("/me", async (req, res) => {
       );
       return p.rows.map((r) => r.permission);
     });
+    firm.logoAt = await withContext({ actorKind: "firm_user", userId: u.id, firmId: u.firmId }, async (c) =>
+      (await c.query<{ updated_at: string }>(`SELECT updated_at FROM firm_logos WHERE firm_id = $1`, [u.firmId])).rows[0]?.updated_at ?? null);
   } else if (u.isSuperAdmin && auth.actingFirmId) {
     const grantId = await activeGrantId(auth.actingFirmId);
     if (grantId) {

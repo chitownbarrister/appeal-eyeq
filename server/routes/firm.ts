@@ -19,6 +19,7 @@ import { trustRouter } from "./trust.js";
 import { billingDesignRouter } from "./billing-design.js";
 import { evaluationRouter } from "./evaluation.js";
 import { importsRouter } from "./imports.js";
+import { propertyPhotosRouter } from "./property-photos.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
@@ -33,6 +34,7 @@ firmRouter.use(trustRouter);
 firmRouter.use(billingDesignRouter);
 firmRouter.use(evaluationRouter);
 firmRouter.use(importsRouter);
+firmRouter.use(propertyPhotosRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {

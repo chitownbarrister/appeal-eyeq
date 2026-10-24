@@ -133,9 +133,11 @@ test("phone width: the week view doesn't scroll sideways", async ({ page }) => {
 test("invoice design: logo, accent and check details with a live preview; a PDF attached to an invoice", async ({ page }) => {
   test.setTimeout(60000);
   await signIn(page);
-  await page.goto("/settings?tab=billing");
+  // The logo lives in Firm profile (10f) and is the one the letterhead uses.
+  await page.goto("/settings?tab=firm");
   await page.getByLabel("Choose a logo image").setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: PNG_1PX });
   await expect(page.getByText("Logo saved.")).toBeVisible();
+  await page.getByRole("tab", { name: "Billing" }).click();
   await expect(page.getByRole("img", { name: "Your letterhead logo" })).toBeVisible();
   await page.getByLabel("Accent color", { exact: true }).fill("#0A1F44");
   await page.getByLabel("Pay by check: payable to and mail to").fill("Payable to Nichols Law\nPO Box 12, Winnetka, IL 60093");

@@ -3,15 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { LEVEL_LABELS, type Level } from "../../../shared/domain";
+import { PropertyAvatar } from "./PropertyPhoto";
 
 interface Results {
-  properties: { id: number; title: string; sub: string }[];
+  properties: { id: number; title: string; sub: string; photoAt?: string | null; assetType?: string | null }[];
   accounts: { id: number; name: string; city: string | null }[];
   appeals: { id: number; property_id: number; assessment_year: number; level: Level; external_id: string | null; petition_no: string | null; property_name: string }[];
   documents?: { id: number; propertyId: number; name: string; type: string | null; year: number | null; level: Level | null; relPath: string | null; property: string; city: string | null }[];
 }
 
-interface Item { key: string; to: string; label: string; sub: string; group: string }
+interface Item { key: string; to: string; label: string; sub: string; group: string; property?: { id: number; photoAt: string | null; assetType: string | null } }
 
 export function GlobalSearch() {
   const navigate = useNavigate();
@@ -33,7 +34,7 @@ export function GlobalSearch() {
       try {
         const r = await api<Results>(`/firm/search?q=${encodeURIComponent(term)}`);
         const next: Item[] = [
-          ...r.properties.map((p) => { const t = splitMatterTitle(p.title); return { key: `p${p.id}`, to: `/properties/${p.id}`, label: t.place, sub: [t.pin ? `PIN ${t.pin}` : null, p.sub].filter(Boolean).join(" · "), group: "Properties" }; }),
+          ...r.properties.map((p) => { const t = splitMatterTitle(p.title); return { key: `p${p.id}`, to: `/properties/${p.id}`, label: t.place, sub: [t.pin ? `PIN ${t.pin}` : null, p.sub].filter(Boolean).join(" · "), group: "Properties", property: { id: p.id, photoAt: p.photoAt ?? null, assetType: p.assetType ?? null } }; }),
           ...r.accounts.map((a) => ({ key: `a${a.id}`, to: `/accounts/${a.id}`, label: a.name, sub: a.city ?? "", group: "Clients" })),
           ...r.appeals.map((a) => ({
             key: `ap${a.id}`, to: `/properties/${a.property_id}?appeal=${a.id}`,
@@ -114,8 +115,17 @@ export function GlobalSearch() {
                   onMouseEnter={() => setActive(items.indexOf(item))}
                   onClick={() => go(item)}
                 >
-                  <b>{item.label}</b>
-                  {item.sub && <span>{item.sub}</span>}
+                  {item.property ? (
+                    <span className="sr-prop">
+                      <PropertyAvatar id={item.property.id} photoAt={item.property.photoAt} assetType={item.property.assetType} size={30} />
+                      <span><b>{item.label}</b>{item.sub && <span>{item.sub}</span>}</span>
+                    </span>
+                  ) : (
+                    <>
+                      <b>{item.label}</b>
+                      {item.sub && <span>{item.sub}</span>}
+                    </>
+                  )}
                 </button>
               ))}
             </div>

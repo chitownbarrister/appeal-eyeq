@@ -34,7 +34,7 @@ export function errorText(err: unknown): string {
 
 export interface Me {
   user: { id: number; name: string; email: string; role: "attorney" | "analyst" | "operations" | null; isSuperAdmin: boolean; isFirmAdmin: boolean };
-  firm: { id: number; name: string; isSample: boolean } | null;
+  firm: { id: number; name: string; isSample: boolean; logoAt?: string | null } | null;
   acting: { firmId: number; firmName: string; grantExpiresAt: string } | null;
   permissions: string[];
   preferences?: { showValueCents: boolean };

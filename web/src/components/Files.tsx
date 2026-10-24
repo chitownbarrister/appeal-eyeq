@@ -50,8 +50,8 @@ function parentOf(rel: string): string {
 }
 
 // ================================================================ the tab
-export function FilesTab({ propertyId, propertyStatus, canEdit, initialPath = "", initialFile = null }: {
-  propertyId: number; propertyStatus?: string; canEdit: boolean; initialPath?: string; initialFile?: string | null;
+export function FilesTab({ propertyId, propertyStatus, canEdit, initialPath = "", initialFile = null, onPhotoChanged }: {
+  propertyId: number; propertyStatus?: string; canEdit: boolean; initialPath?: string; initialFile?: string | null; onPhotoChanged?: () => void;
 }) {
   const [rel, setRel] = useState(initialFile ? parentOf(initialFile) : initialPath);
   const [data, setData] = useState<FilesData | null>(null);
@@ -339,6 +339,10 @@ export function FilesTab({ propertyId, propertyStatus, canEdit, initialPath = ""
                               { label: "Profile", onClick: () => { setSelected(e.relPath); setPanel("profile"); } },
                               { label: "Version history", onClick: () => { setSelected(e.relPath); setPanel("versions"); } },
                               ...(editable ? [{ label: "Rename", onClick: () => setRenaming(e.relPath) }] : []),
+                              ...(editable && /\.(jpe?g|png|webp)$/i.test(e.name) ? [{
+                                label: "Use as property photo",
+                                onClick: () => void act("photo", () => api(`/firm/properties/${propertyId}/files/use-as-photo`, { method: "POST", body: { path: e.relPath } }), "Now the property's photo.").then((ok) => { if (ok) onPhotoChanged?.(); }),
+                              }] : []),
                               ...deleteItem(e, can, () => setConfirmDelete(e.relPath)),
                             ]}
                           />

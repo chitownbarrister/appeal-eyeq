@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { closePool, getPool, query } from "./db.js";
 import { hashPassword, PASSWORD_MIN_LENGTH } from "./auth.js";
-import { seedSampleData } from "./seed/sample.js";
+import { addSamplePhotosIfNone, seedSampleData } from "./seed/sample.js";
 import { seedAllDocumentDefaults } from "./documents.js";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "db", "migrations");
@@ -75,6 +75,7 @@ async function main(): Promise<void> {
     if (process.env.SEED_SAMPLE_DATA === "true") {
       await seedSampleData(console.log);
     }
+    await addSamplePhotosIfNone(console.log);
   } finally {
     await closePool();
   }

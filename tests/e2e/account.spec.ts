@@ -37,7 +37,7 @@ test("the account menu: who you are, settings, integrations, sign out; Settings 
   await button.click();
   await page.getByRole("menuitem", { name: "Firm settings" }).click();
   await expect(page.getByRole("heading", { name: "Firm settings" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Users" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Firm profile" })).toHaveAttribute("aria-selected", "true");
   await button.click();
   await page.getByRole("menuitem", { name: "Integrations" }).click();
   await expect(page.getByRole("tab", { name: "Integrations" })).toHaveAttribute("aria-selected", "true");

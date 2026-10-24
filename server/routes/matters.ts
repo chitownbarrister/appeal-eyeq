@@ -109,6 +109,7 @@ mattersRouter.get("/properties", async (req, res) => {
               co.name AS county, t.name AS township, p.account_id, ac.name AS account_name,
               p.attorney_user_id, att.name AS attorney_name, p.analyst_user_id, ana.name AS analyst_name,
               pp.pin, p.no_fee, p.co_counsel_firm, p.co_counsel_role,
+              (SELECT ph.updated_at FROM property_photos ph WHERE ph.firm_id = p.firm_id AND ph.property_id = p.id) AS photo_at,
               cur.id AS appeal_id, cur.level, cur.substage, cur.status AS appeal_status, cur.assessment_year,
               GREATEST(0, EXTRACT(day FROM now() - cur.substage_since))::int AS days_in_substage,
               cur.orig_av AS current_av, cur.target_av, cur.estimated_savings, cur.next_action, cur.next_action_on,
@@ -273,7 +274,9 @@ mattersRouter.get("/properties/:id", async (req, res) => {
               ac.fee_percent_first_year AS account_fee_first_year, ac.fee_percent_refund AS account_fee_refund,
               ac.fee_type AS account_fee_type, ac.flat_fee AS account_flat_fee, ac.fee_cap AS account_fee_cap,
               att.name AS attorney_name, ana.name AS analyst_name,
-              (SELECT r.multifamily_residential_max_units FROM county_rules r WHERE r.county_id = p.county_id) AS multifamily_max_units
+              (SELECT r.multifamily_residential_max_units FROM county_rules r WHERE r.county_id = p.county_id) AS multifamily_max_units,
+              (SELECT json_build_object('updatedAt', ph.updated_at, 'width', ph.width, 'height', ph.height, 'source', ph.source, 'sourceName', ph.source_name)
+                 FROM property_photos ph WHERE ph.firm_id = p.firm_id AND ph.property_id = p.id) AS photo
          FROM properties p
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
          JOIN counties co ON co.id = p.county_id
@@ -990,7 +993,7 @@ mattersRouter.get("/accounts/:id", async (req, res) => {
           ORDER BY a.property_id, a.assessment_year DESC, ${LEVEL_ORDER} DESC
        )
        SELECT p.id, p.name, p.address1, p.city, p.state, p.status, p.asset_type, app_asset_group(p.asset_type, p.units, p.county_id, p.asset_group_override) AS asset_group, co.name AS county, t.name AS township,
-              p.co_counsel_firm, p.co_counsel_role,
+              p.co_counsel_firm, p.co_counsel_role, (SELECT ph.updated_at FROM property_photos ph WHERE ph.firm_id = p.firm_id AND ph.property_id = p.id) AS photo_at,
               (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin,
               cur.level, cur.substage
          FROM properties p JOIN counties co ON co.id = p.county_id LEFT JOIN townships t ON t.id = p.township_id
@@ -1230,7 +1233,8 @@ mattersRouter.get("/search", async (req, res) => {
   const firmId = req.ctx!.firmId;
   const data = await withContext(req.ctx!, async (c) => {
     const properties = (await c.query(
-      `SELECT DISTINCT ON (p.id) p.id, p.name, p.address1, p.city, t.name AS township, ac.name AS account_name,
+      `SELECT DISTINCT ON (p.id) p.id, p.name, p.address1, p.city, t.name AS township, ac.name AS account_name, p.asset_type,
+              (SELECT ph.updated_at FROM property_photos ph WHERE ph.firm_id = p.firm_id AND ph.property_id = p.id) AS photo_at,
               (SELECT x.pin FROM parcels x WHERE x.firm_id = p.firm_id AND x.property_id = p.id ORDER BY x.is_primary DESC, x.id LIMIT 1) AS pin
          FROM properties p
          JOIN accounts ac ON ac.firm_id = p.firm_id AND ac.id = p.account_id
@@ -1273,7 +1277,7 @@ mattersRouter.get("/search", async (req, res) => {
     return { properties, accounts, appeals, documents };
   });
   res.json({
-    properties: data.properties.map((p) => ({ id: p.id, title: matterTitle(p.pin, p.address1 || p.name, p.city, p.township), sub: p.account_name })),
+    properties: data.properties.map((p) => ({ id: p.id, title: matterTitle(p.pin, p.address1 || p.name, p.city, p.township), sub: p.account_name, photoAt: p.photo_at, assetType: p.asset_type })),
     accounts: data.accounts,
     appeals: data.appeals,
     documents: data.documents.map((d) => {

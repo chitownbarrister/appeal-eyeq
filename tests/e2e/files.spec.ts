@@ -27,7 +27,7 @@ test.beforeEach(async ({ page }) => {
 
 test("firm admins and the Operations role: toggles, role change, and the permissions grid", async ({ page }) => {
   await signIn(page);
-  await page.goto("/settings");
+  await page.goto("/settings?tab=users");
   await expect(page.locator("th", { hasText: "Firm admin" })).toBeVisible();
   await expect(page.getByLabel("Firm admin: Dillon Nichols")).toHaveAttribute("aria-pressed", "true");
 
@@ -47,14 +47,14 @@ test("firm admins and the Operations role: toggles, role change, and the permiss
   await page.getByRole("button", { name: /^Account menu for/ }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await signIn(page, "julie@nicholslaw.example");
-  await page.goto("/settings");
+  await page.goto("/settings?tab=users");
   await expect(page.getByLabel("Role for Sana Khan")).toBeVisible();
 
   // Put everything back, and the last-admin guard holds for Dillon once Julie is no longer one.
   await page.getByLabel("Role for Sana Khan").selectOption("analyst");
   await page.getByLabel("Firm admin: Julie Ramos").click();
   await expect(page.getByText("Only a firm admin can do that.").or(page.getByLabel("Role for Sana Khan"))).toBeVisible();
-  await page.goto("/settings");
+  await page.goto("/settings?tab=users");
   await expect(page.getByLabel("Role for Sana Khan")).toHaveCount(0);
   await expect(page.getByRole("row", { name: /Julie Ramos/ })).not.toContainText("Firm admin");
 });

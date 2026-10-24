@@ -50,6 +50,7 @@ export function createApp(): express.Express {
     if (req.method === "POST" && /^\/firm\/properties\/\d+\/files\/upload$/.test(req.path) && req.is("application/octet-stream")) return next();
     if (req.method === "POST" && req.path === "/firm/decisions/upload" && req.is("application/octet-stream")) return next();
     if (req.method === "POST" && /^\/firm\/imports\/\d+\/files$/.test(req.path) && req.is("application/octet-stream")) return next();
+    if (req.method === "POST" && /^\/firm\/properties\/\d+\/photo$/.test(req.path) && req.is("application/octet-stream")) return next();
     if (!req.is("application/json")) {
       res.status(415).json({ error: "Send JSON." });
       return;

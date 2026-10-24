@@ -43,6 +43,11 @@ export function Shell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         {outsideFirm ? <span className="sp" /> : <GlobalSearch />}
+        {!outsideFirm && me.firm?.logoAt && (
+          <NavLink to="/settings?tab=firm" className="firm-logo" title={me.firm.name}>
+            <img src={`/api/firm/billing/logo?v=${encodeURIComponent(me.firm.logoAt)}`} alt={`${me.firm.name} logo`} />
+          </NavLink>
+        )}
         <UserMenu />
       </header>
       {me.acting && (

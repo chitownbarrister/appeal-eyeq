@@ -14,6 +14,7 @@ import { splitAgreedTotal } from "../../shared/pins.js";
 import { computeAppealTax } from "../../shared/valuation.js";
 import { centsToString, toCents } from "../../shared/money.js";
 import { DEFAULT_FEES, type AppealStatus, type Level, type Substage } from "../../shared/domain.js";
+import { seedSamplePhotos } from "../photos.js";
 
 const SEED_DIR = path.resolve(process.cwd(), "db", "seed", "sample");
 const FIRM_SLUG = "nichols-law";
@@ -117,6 +118,21 @@ export async function seedSampleData(log: (msg: string) => void = console.log): 
   log("Sample data: Nichols Law created (sample only)");
 }
 
+/**
+ * Photos for a sample firm that has none yet (one seeded before photos existed). Runs on every start
+ * and does nothing once the firm has any photo, so a photo removed on purpose doesn't come back.
+ */
+export async function addSamplePhotosIfNone(log: (msg: string) => void = console.log): Promise<void> {
+  const firms = (await query<{ id: number }>(`SELECT id FROM firms WHERE is_sample`)).rows;
+  for (const f of firms) {
+    const n = await withContext({ actorKind: "system", userId: null, firmId: f.id }, async (c) => {
+      if ((await c.query(`SELECT 1 FROM property_photos WHERE firm_id = $1 LIMIT 1`, [f.id])).rowCount) return 0;
+      return seedSamplePhotos(c, f.id);
+    });
+    if (n) log(`Sample data: ${n} property photos added`);
+  }
+}
+
 /** Clients, properties, appeals, tasks and deadlines for the sample firm. */
 async function seedFirmContent(c: pg.PoolClient, firmId: number, userIds: Record<string, number>): Promise<void> {
   const accountIds = await seedAccounts(c, firmId, userIds);
@@ -124,6 +140,7 @@ async function seedFirmContent(c: pg.PoolClient, firmId: number, userIds: Record
   await seedAppeals(c, firmId, userIds, propertyIds);
   await seedPins(c, firmId, propertyIds);
   await seedWorkItems(c, firmId, userIds, propertyIds);
+  await seedSamplePhotos(c, firmId);
 }
 
 /**

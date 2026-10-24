@@ -2,8 +2,8 @@
 // the firm, the firm pays Stripe's fees), whether email is set up, invoice numbering,
 // payment terms, the note printed on invoices, and the letterhead.
 
-import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, errorText } from "../api";
 import { useSession } from "../App";
 import { todayIso } from "../format";
@@ -22,7 +22,6 @@ export function BillingSettingsTab() {
   const [params, setParams] = useSearchParams();
   const [s, setS] = useState<S | null>(null);
   const [f, setF] = useState({ invoicePrefix: "", paymentTermsDays: "30", invoiceNote: "", replyToEmail: "", letterheadName: "", letterheadAddress: "", letterheadPhone: "", letterheadWebsite: "", accentColor: "", remitTo: "" });
-  const [logoMsg, setLogoMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [previewSrc, setPreviewSrc] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -74,30 +73,7 @@ export function BillingSettingsTab() {
     return () => window.clearTimeout(t);
   }, [draftKey, logoStamp, s]);
 
-  async function chooseLogo(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setLogoMsg(null);
-    if (!["image/png", "image/jpeg"].includes(file.type)) { setLogoMsg({ ok: false, text: "Use a PNG or JPEG image." }); return; }
-    if (file.size > 1024 * 1024) { setLogoMsg({ ok: false, text: "The logo can be up to 1 MB." }); return; }
-    const data = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
-    setBusy("logo");
-    try {
-      await api("/firm/billing/logo", { method: "PUT", body: { contentType: file.type, data } });
-      await load();
-      setLogoMsg({ ok: true, text: "Logo saved. It prints on invoices, statements and settlement letters." });
-    } catch (err) { setLogoMsg({ ok: false, text: errorText(err) }); } finally { setBusy(""); }
-  }
-  async function removeLogo() {
-    setBusy("logo"); setLogoMsg(null);
-    try { await api("/firm/billing/logo", { method: "DELETE" }); await load(); setLogoMsg({ ok: true, text: "Logo removed." }); } catch (err) { setLogoMsg({ ok: false, text: errorText(err) }); } finally { setBusy(""); }
-  }
+
 
   if (!s) return error ? <div className="error" role="alert">{error}</div> : null;
   const st = s.stripe;
@@ -173,18 +149,9 @@ export function BillingSettingsTab() {
             <span className="lbl">Logo</span>
             <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               {s.logo ? <img className="logo-thumb" src={`/api/firm/billing/logo?v=${encodeURIComponent(s.logo.updated_at)}`} alt="Your letterhead logo" /> : <span className="meta">No logo. The firm name prints in its place.</span>}
-              {isAdmin && (
-                <>
-                  <label className="btn small secondary" style={{ cursor: "pointer" }}>
-                    {busy === "logo" ? "Saving" : s.logo ? "Replace logo" : "Upload logo"}
-                    <input type="file" hidden accept="image/png,image/jpeg" aria-label="Choose a logo image" onChange={(e) => void chooseLogo(e)} />
-                  </label>
-                  {s.logo && <button type="button" className="btn small ghost" disabled={busy === "logo"} onClick={() => void removeLogo()}>Remove</button>}
-                </>
-              )}
+              <Link className="btn small secondary" to="/settings?tab=firm">{s.logo ? "Change in Firm profile" : "Add one in Firm profile"}</Link>
             </div>
-            <span className="hint">PNG or JPEG, up to 1 MB. A wide logo on a white or clear background prints best.</span>
-            {logoMsg && <div className={logoMsg.ok ? "ok" : "error"} role={logoMsg.ok ? "status" : "alert"}>{logoMsg.text}</div>}
+            <span className="hint">The firm's logo, set in Firm profile, is the one used here.</span>
           </div>
           <div className="fld">
             <label htmlFor="bs-accent">Accent color</label>

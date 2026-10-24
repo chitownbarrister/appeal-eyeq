@@ -38,6 +38,7 @@ test("settings: users, fees, permissions and the audit trail work end to end", a
   await signIn(page, "dillon@nicholslaw.example", PW);
   await page.getByRole("button", { name: /^Account menu for/ }).click();
   await page.getByRole("menuitem", { name: "Firm settings" }).click();
+  await page.getByRole("tab", { name: "Users" }).click();
   await expect(page.getByRole("cell", { name: "julie@nicholslaw.example" })).toBeVisible();
 
   await page.getByRole("tab", { name: "Fee defaults" }).click();

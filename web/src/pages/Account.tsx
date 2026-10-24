@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useSession } from "../App";
 import { useApi } from "../data";
-import { formatMoney, titleCase } from "../format";
+import { formatMoney, splitMatterTitle, titleCase } from "../format";
+import { PropertyAvatar } from "../components/PropertyPhoto";
 import { MatterName } from "../components/MatterName";
 import { LEVEL_LABELS, SUBSTAGE_LABELS, type Level, type Substage } from "../../../shared/domain";
 import type { EffectiveFee } from "../../../shared/fees";
@@ -14,7 +15,7 @@ import { ClientBilling } from "../components/BillingSheets";
 
 interface AccountDetail {
   account: AccountRecord & { rep_name: string | null };
-  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; asset_group: string; co_counsel_firm?: string | null; co_counsel_role?: "relationship" | "handling" | null; level: Level | null; substage: Substage | null }[];
+  properties: { id: number; title: string; city: string | null; state: string; county: string; township: string | null; status: string; asset_type: string; asset_group: string; co_counsel_firm?: string | null; co_counsel_role?: "relationship" | "handling" | null; photo_at?: string | null; level: Level | null; substage: Substage | null }[];
   savings: { assessment_year: number; savings: string }[];
   activeAppeals: number;
   contacts: Parameters<typeof ContactsTab>[0]["contacts"];
@@ -98,7 +99,8 @@ export function Account() {
                     {props.map((p) => (
                       <tr key={p.id} className="clickable" onClick={() => navigate(`/properties/${p.id}`)}>
                         <td>
-                          <span className="cc-row">
+                          <span className="cc-row with-avatar">
+                            <PropertyAvatar id={p.id} photoAt={p.photo_at} assetType={p.asset_type} size={32} label={splitMatterTitle(p.title).place} />
                             <MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} />
                             {p.co_counsel_firm && <span className="cc-mark" title={`Co-counseled with ${p.co_counsel_firm}`} aria-label={`Co-counseled with ${p.co_counsel_firm}`}>*</span>}
                           </span>

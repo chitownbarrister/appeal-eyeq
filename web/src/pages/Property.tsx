@@ -20,6 +20,7 @@ import { DeadlinesBlock, DeadlineSheet, clock } from "../components/Deadlines";
 import { FilesTab } from "../components/Files";
 import { KIND_LABELS, LetterSheet, type LetterSummary } from "../components/DecisionLetter";
 import { uploadDecisionFiles } from "./Decisions";
+import { PhotoPanel, type PhotoInfo } from "../components/PropertyPhoto";
 
 export interface AppealRow {
   id: number; property_id: number; parcel_id: number | null; assessment_year: number; tax_year: number; level: Level; substage: Substage;
@@ -44,7 +45,7 @@ export interface DeadlineItem {
 interface Detail {
   deadlines: DeadlineItem[];
   today: string;
-  property: PropertyRecord & { title: string; county: string; township: string | null; account_name: string; attorney_name: string | null; analyst_name: string | null };
+  property: PropertyRecord & { title: string; county: string; township: string | null; account_name: string; attorney_name: string | null; analyst_name: string | null; photo?: PhotoInfo | null };
   parcels: Parcel[];
   appeals: AppealRow[];
   contacts: Contact[];
@@ -255,31 +256,34 @@ export function Property() {
               />
               {trackError && <div className="error" role="alert">{trackError}</div>}
             </div>
-            <dl className="facts">
-              <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}{appeals.some((a) => a.refund_status === "awaiting") && <> <span className="pill copper">Awaiting refund</span></>}</dd></div>
-              <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>
-              <div><dt>Analyst</dt><dd>{p.analyst_name ?? "Not assigned"}</dd></div>
-              <div><dt>Township</dt><dd>{p.township ?? "Not set"}{p.tax_code ? ` · tax code ${p.tax_code}` : ""}{p.tax_code && !p.tax_code_confirmed ? " (unconfirmed)" : ""}</dd></div>
-              <div><dt>Level of assessment</dt><dd title={levelTip(p)}>{p.level_of_assessment ? pct(p.level_of_assessment) : "Not set"}{levelNote(p) && <span className="mn" style={{ display: "block" }}>{levelNote(p)}</span>}</dd></div>
-              <div><dt>Current AV</dt><dd className="num">{formatValue(now?.orig_av)}</dd></div>
-              <div><dt>Target AV</dt><dd className="num">{formatValue(now?.target_av)}</dd></div>
-              <div><dt>Achieved savings</dt><dd className="num" style={{ color: "var(--ok)" }}>{formatMoney(achieved)}</dd></div>
-              <div><dt>Est. savings now</dt><dd className="num">{now?.estimated_savings ? formatMoney(now.estimated_savings) : "—"}</dd></div>
-              <DeadlinesBlock items={data.deadlines} today={data.today} canEdit={can("appeals.edit")} onAdd={() => setDeadline("new")} onOpen={(d) => setDeadline(d)} />
-              <div className="wide">
-                <dt>Fee</dt>
-                <dd>
-                  <FeeFigures firstYear={data.fees.firstYear} refund={data.fees.refund} noFee={data.fees.firstYear.noFee}
-                    flat={p.account_fee_type === "flat" ? p.account_flat_fee : null} cap={p.account_fee_cap} />
-                  {can("fees.edit") && <> <span className="sep" aria-hidden="true">·</span> <button className="lk" onClick={() => setSheet("fees")}>Edit</button></>}
-                  {p.co_counsel_firm && (
-                    <span className="cc-note" title={`Co-counseled with ${p.co_counsel_firm}: we're the ${p.co_counsel_role === "handling" ? "handling" : "relationship"} firm${p.co_counsel_bills ? `, ${p.co_counsel_bills === "us" ? "we bill the client" : "they bill the client"}` : ""}. Details on the Evaluation tab.`}>
-                      <span className="cc-mark" aria-hidden="true">*</span>Co-counsel <b>{p.co_counsel_firm}</b>{p.co_counsel_percent ? <> · <b className="num">{pct(p.co_counsel_percent)}</b> of the fee</> : null}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            </dl>
+            <div className="mside">
+              <PhotoPanel propertyId={p.id} photo={p.photo ?? null} assetType={p.asset_type} address={splitMatterTitle(p.title).place} canEdit={can("properties.edit")} onChanged={() => reload()} />
+              <dl className="facts">
+                <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}{appeals.some((a) => a.refund_status === "awaiting") && <> <span className="pill copper">Awaiting refund</span></>}</dd></div>
+                <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>
+                <div><dt>Analyst</dt><dd>{p.analyst_name ?? "Not assigned"}</dd></div>
+                <div><dt>Township</dt><dd>{p.township ?? "Not set"}{p.tax_code ? ` · tax code ${p.tax_code}` : ""}{p.tax_code && !p.tax_code_confirmed ? " (unconfirmed)" : ""}</dd></div>
+                <div><dt>Level of assessment</dt><dd title={levelTip(p)}>{p.level_of_assessment ? pct(p.level_of_assessment) : "Not set"}{levelNote(p) && <span className="mn" style={{ display: "block" }}>{levelNote(p)}</span>}</dd></div>
+                <div><dt>Current AV</dt><dd className="num">{formatValue(now?.orig_av)}</dd></div>
+                <div><dt>Target AV</dt><dd className="num">{formatValue(now?.target_av)}</dd></div>
+                <div><dt>Achieved savings</dt><dd className="num" style={{ color: "var(--ok)" }}>{formatMoney(achieved)}</dd></div>
+                <div><dt>Est. savings now</dt><dd className="num">{now?.estimated_savings ? formatMoney(now.estimated_savings) : "—"}</dd></div>
+                <DeadlinesBlock items={data.deadlines} today={data.today} canEdit={can("appeals.edit")} onAdd={() => setDeadline("new")} onOpen={(d) => setDeadline(d)} />
+                <div className="wide">
+                  <dt>Fee</dt>
+                  <dd>
+                    <FeeFigures firstYear={data.fees.firstYear} refund={data.fees.refund} noFee={data.fees.firstYear.noFee}
+                      flat={p.account_fee_type === "flat" ? p.account_flat_fee : null} cap={p.account_fee_cap} />
+                    {can("fees.edit") && <> <span className="sep" aria-hidden="true">·</span> <button className="lk" onClick={() => setSheet("fees")}>Edit</button></>}
+                    {p.co_counsel_firm && (
+                      <span className="cc-note" title={`Co-counseled with ${p.co_counsel_firm}: we're the ${p.co_counsel_role === "handling" ? "handling" : "relationship"} firm${p.co_counsel_bills ? `, ${p.co_counsel_bills === "us" ? "we bill the client" : "they bill the client"}` : ""}. Details on the Evaluation tab.`}>
+                        <span className="cc-mark" aria-hidden="true">*</span>Co-counsel <b>{p.co_counsel_firm}</b>{p.co_counsel_percent ? <> · <b className="num">{pct(p.co_counsel_percent)}</b> of the fee</> : null}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </div>
         </div>
         <div className="subtabs" role="tablist">
@@ -321,7 +325,7 @@ export function Property() {
           {tab === "activities" && <ActivitiesTab target={{ propertyId: p.id }} activities={data.activities} onChanged={() => void refreshAll()} />}
           {tab === "billing" && <PropertyBilling propertyId={p.id} />}
           {tab === "evaluation" && <EvaluationTab key={`${p.id}:${appeals.length}`} propertyId={p.id} />}
-          {tab === "files" && <FilesTab key={`${p.id}:${askedFile ?? ""}`} propertyId={p.id} propertyStatus={p.status} canEdit={can("properties.edit")} initialPath={params.get("path") ?? ""} initialFile={askedFile} />}
+          {tab === "files" && <FilesTab key={`${p.id}:${askedFile ?? ""}`} propertyId={p.id} propertyStatus={p.status} canEdit={can("properties.edit")} initialPath={params.get("path") ?? ""} initialFile={askedFile} onPhotoChanged={() => void reload()} />}
         </div>
       </section>
 

@@ -25,6 +25,7 @@ import {
 } from "../dropbox/folders.js";
 import { loadTemplate, placeOf, typesFor, type Template } from "../documents.js";
 import { dropboxCall, hasPermission, httpError, idParam, noSupportAccess } from "./files-common.js";
+import { MAX_PHOTO_BYTES, processPhoto, savePhoto } from "../photos.js";
 
 export const propertyFilesRouter = Router();
 propertyFilesRouter.use("/properties/:id/files", noSupportAccess);
@@ -653,6 +654,21 @@ propertyFilesRouter.get("/properties/:id/files/raw", async (req, res) => {
   res.setHeader("Content-Type", MIME[extensionOf(f.meta.name)] ?? "application/octet-stream");
   res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(f.meta.name)}`);
   res.send(got.body);
+});
+
+/** Makes an image in the property's folder its photo (a copy is made in two sizes; the file stays in Dropbox). */
+propertyFilesRouter.post("/properties/:id/files/use-as-photo", requirePermission("properties.edit"), async (req, res) => {
+  const body = z.object({ path: z.string().min(1).max(1000) }).safeParse(req.body);
+  if (!body.success) throw httpError(400, "Choose a file.");
+  const p = await loadProperty(req);
+  const dbx = await openDropbox(req);
+  const f = await fileAt(req, dbx, p, body.data.path);
+  if (!/\.(jpe?g|png|webp)$/i.test(f.meta.name)) throw httpError(415, "Choose a JPEG, PNG or WebP image to use as the photo.");
+  if ((f.meta.size ?? 0) > MAX_PHOTO_BYTES) throw httpError(413, "A photo can be up to 15 MB.");
+  const got = await dropboxCall(() => dbx.content("files/download", { path: f.abs }, MAX_PHOTO_BYTES));
+  const processed = await processPhoto(Buffer.from(got.body));
+  const at = await withContext(req.ctx!, (c) => savePhoto(c, req.ctx!.firmId!, p.id, processed, "dropbox", f.meta.name, req.auth!.user.id));
+  res.json({ photo: { updatedAt: at, width: processed.width, height: processed.height, source: "dropbox", sourceName: f.meta.name } });
 });
 
 /** Word, PowerPoint and similar as PDF, spreadsheets as HTML, both rendered by Dropbox. */

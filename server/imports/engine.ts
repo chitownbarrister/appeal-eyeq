@@ -803,6 +803,7 @@ const UNDO_NAMES: Record<string, string> = {
   activities: "activities", contacts: "contacts", expenses: "expenses", invoices: "invoices", payments: "payments", properties: "properties", statements: "statements",
   stripe_customers: "card payment records", trust_entries: "trust entries", trust_settlements: "settlements", appeals: "appeals", appeal_offers: "offers", deadlines: "deadlines",
   decision_letters: "decision letters", decision_uploads: "decision letter uploads", documents: "documents", parcels: "PINs", property_folders: "Dropbox folders",
+  property_photos: "photos",
 };
 /** Why an import can't be undone as it stands (work added since to what it made), or null. */
 export async function undoCheck(c: pg.PoolClient, firmId: number, batchId: number): Promise<string | null> {

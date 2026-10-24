@@ -6,6 +6,7 @@ import { formatDate, formatMoney, titleCase } from "../format";
 import { ASSET_TYPE_LABELS, LEVELS, LEVEL_LABELS, MAIN_ASSET_TYPES, SPECIALTY_ASSET_TYPES, SUBSTAGE_LABELS, LEVEL_SUBSTAGES, type AssetType, type Level, type Substage } from "../../../shared/domain";
 import { PropertySheet } from "../components/forms";
 import { MatterName } from "../components/MatterName";
+import { PropertyAvatar } from "../components/PropertyPhoto";
 import type { DashboardData } from "./Dashboard";
 
 export interface PropertyRow {
@@ -14,7 +15,7 @@ export interface PropertyRow {
   attorney_user_id: number | null; attorney_name: string | null; analyst_user_id: number | null; analyst_name: string | null;
   pin: string | null; level: Level | null; substage: Substage | null; days_in_substage: number | null; assessment_year: number | null;
   estimated_savings: string | null; next_action: string | null; next_action_on: string | null; no_fee: boolean;
-  co_counsel_firm: string | null; co_counsel_role: "relationship" | "handling" | null;
+  co_counsel_firm: string | null; co_counsel_role: "relationship" | "handling" | null; photo_at: string | null;
   unfiled_window_open: boolean; pending_ptab_years: number[]; window_closes_on: string | null; next_title: string | null; next_on: string | null; next_kind: string | null;
 }
 
@@ -227,7 +228,8 @@ export function Properties() {
               {rows.map((p) => (
                 <tr key={p.id} className="clickable" onClick={() => navigate(`/properties/${p.id}`)}>
                   <td style={{ minWidth: 210 }}>
-                    <span className="cc-row">
+                    <span className="cc-row with-avatar">
+                      <PropertyAvatar id={p.id} photoAt={p.photo_at} assetType={p.asset_type} label={p.address1 ?? p.name} />
                       <MatterName title={p.title} to={`/properties/${p.id}`} onClick={(e) => e.stopPropagation()} />
                       {p.co_counsel_firm && (
                         <span className="cc-mark" title={`Co-counseled with ${p.co_counsel_firm}${p.co_counsel_role ? ` (we're the ${p.co_counsel_role} firm)` : ""}`} aria-label={`Co-counseled with ${p.co_counsel_firm}`}>*</span>

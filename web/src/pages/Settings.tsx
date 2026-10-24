@@ -7,10 +7,12 @@ import { LEVEL_LABELS, PERMISSIONS, ROLES, ROLE_LABELS, type Level, type Role } 
 import { IntegrationsTab } from "../components/Integrations";
 import { DocumentsTab } from "../components/DocumentsSettings";
 import { BillingSettingsTab } from "../components/BillingSettings";
+import { FirmProfileTab } from "../components/FirmProfile";
 
-type Tab = "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "billing" | "import" | "audit" | "sample";
+type Tab = "firm" | "users" | "fees" | "permissions" | "support" | "documents" | "integrations" | "billing" | "import" | "audit" | "sample";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "firm", label: "Firm profile" },
   { id: "users", label: "Users" },
   { id: "fees", label: "Fee defaults" },
   { id: "permissions", label: "Roles & permissions" },
@@ -25,7 +27,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function Settings() {
   const { me } = useSession();
   const [params] = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === params.get("tab")) ? (params.get("tab") as Tab) : "users"));
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === params.get("tab")) ? (params.get("tab") as Tab) : "firm"));
   // Follow ?tab= when it changes, e.g. choosing Integrations from the account menu while already here.
   const asked = params.get("tab");
   useEffect(() => { if (asked && TABS.some((t) => t.id === asked)) setTab(asked as Tab); }, [asked]);
@@ -45,6 +47,7 @@ export function Settings() {
           </button>
         ))}
       </div>
+      {tab === "firm" && <FirmProfileTab />}
       {tab === "users" && <UsersTab />}
       {tab === "fees" && <FeesTab />}
       {tab === "permissions" && <PermissionsTab />}
