@@ -895,11 +895,25 @@ button.tg-dh:hover { color: var(--navy); text-decoration: underline; }
 .cc-row.with-avatar { align-items: center; gap: 10px; }
 .cc-row.with-avatar .cc-mark { align-self: flex-end; }
 .mside { display: grid; gap: 16px; align-content: start; min-width: 0; }
-.pphoto { display: grid; gap: 8px; }
-.pphoto-img { display: block; width: 100%; aspect-ratio: 3 / 2; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); padding: 0; background: var(--line-2); cursor: zoom-in; }
-.pphoto-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pphoto { display: grid; gap: 6px; align-content: start; }
+.pphoto-frame { position: relative; }
+.pphoto-img { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); padding: 0; background: var(--line-2); cursor: zoom-in; }
+.pphoto-img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.25s ease; }
+.pphoto-img:hover img { transform: scale(1.02); }
 .pphoto-img.empty { display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--navy); background: var(--net-wash); cursor: default; border-style: dashed; }
-.pphoto-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Change and Remove sit on the photo, shown when the pointer is over it or a button has focus (always on touch screens). */
+.pphoto-acts { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; opacity: 0; transition: opacity 0.15s ease; }
+.pphoto-acts .btn { background: rgba(255, 255, 255, 0.94); box-shadow: 0 1px 3px rgba(8, 15, 30, 0.2); }
+.pphoto-frame:hover .pphoto-acts, .pphoto-frame:focus-within .pphoto-acts, .pphoto-frame.busy .pphoto-acts { opacity: 1; }
+@media (hover: none) { .pphoto-acts { opacity: 1; } }
+/* The property header: photo beside the title, the year track under both. */
+.mtop { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 12px; }
+.mtop .mtitle .pin-head { margin-top: 2px; }
+.mtop .mtitle h1 { margin-top: 2px; }
+@media (max-width: 760px) {
+  .mtop { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .mtop .pphoto-img { aspect-ratio: 16 / 9; }
+}
 .pphoto-full { position: fixed; inset: 0; z-index: 80; background: rgba(8, 15, 30, 0.86); display: grid; place-items: center; gap: 12px; padding: 24px; outline: none; grid-template-rows: minmax(0, 1fr) auto; }
 .pphoto-full img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r); }
 .search-results .sr-prop { display: flex; gap: 10px; align-items: center; color: inherit; font-size: inherit; }

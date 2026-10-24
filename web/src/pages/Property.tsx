@@ -220,33 +220,38 @@ export function Property() {
                   {can("appeals.edit") && <button className="btn small" onClick={() => setSheet("appeal")}>+ Appeal</button>}
                 </div>
               </div>
-              {splitMatterTitle(p.title).pin && <div className="pin-head">PIN {splitMatterTitle(p.title).pin}{data.parcels.length > 1 ? ` and ${data.parcels.length - 1} more` : ""}</div>}
-              <h1>{splitMatterTitle(p.title).place}</h1>
-              <div className="dmeta">
-                <span>Client <Link to={`/accounts/${p.account_id}`}>{p.account_name}</Link></span>
-                {data.parcels[0]?.owner_name && <span>Owner of record <b>{data.parcels[0].owner_name}</b></span>}
-                <span><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></span>
-                {p.no_fee && <span className="pill net">No fee property</span>}
-              </div>
-              {data.pendingPtab.length > 0 && (
-                <div className="ptab-flag" role="status">
-                  <b>Pending PTAB</b>
-                  {data.pendingPtab.map((x) => (
-                    <button key={x.appealId} type="button" className="lk" onClick={() => { setSelected(x.appealId); setTab("values"); }}>{x.year}{x.docket ? ` · docket ${x.docket}` : ""}</button>
-                  ))}
-                </div>
-              )}
-              {years.length > 0 && (
-                <div style={{ marginTop: 18 }}>
-                  <div className="vseg" role="group" aria-label="Assessment year">
-                    {years.map((y) => (
-                      <button key={y} className={activeYear === y ? "on" : ""} aria-pressed={activeYear === y} onClick={() => setYear(y)}>
-                        {y}{y === years[0] ? " · current" : ""}
-                      </button>
-                    ))}
+              <div className="mtop">
+                <PhotoPanel propertyId={p.id} photo={p.photo ?? null} assetType={p.asset_type} address={splitMatterTitle(p.title).place} canEdit={can("properties.edit")} onChanged={() => reload()} />
+                <div className="mtitle">
+                  {splitMatterTitle(p.title).pin && <div className="pin-head">PIN {splitMatterTitle(p.title).pin}{data.parcels.length > 1 ? ` and ${data.parcels.length - 1} more` : ""}</div>}
+                  <h1>{splitMatterTitle(p.title).place}</h1>
+                  <div className="dmeta">
+                    <span>Client <Link to={`/accounts/${p.account_id}`}>{p.account_name}</Link></span>
+                    {data.parcels[0]?.owner_name && <span>Owner of record <b>{data.parcels[0].owner_name}</b></span>}
+                    <span><span className={`pill ${p.status === "active" ? "ok" : ""}`}>{titleCase(p.status)}</span></span>
+                    {p.no_fee && <span className="pill net">No fee property</span>}
                   </div>
+                  {data.pendingPtab.length > 0 && (
+                    <div className="ptab-flag" role="status">
+                      <b>Pending PTAB</b>
+                      {data.pendingPtab.map((x) => (
+                        <button key={x.appealId} type="button" className="lk" onClick={() => { setSelected(x.appealId); setTab("values"); }}>{x.year}{x.docket ? ` · docket ${x.docket}` : ""}</button>
+                      ))}
+                    </div>
+                  )}
+                  {years.length > 0 && (
+                    <div style={{ marginTop: 18 }}>
+                      <div className="vseg" role="group" aria-label="Assessment year">
+                        {years.map((y) => (
+                          <button key={y} className={activeYear === y ? "on" : ""} aria-pressed={activeYear === y} onClick={() => setYear(y)}>
+                            {y}{y === years[0] ? " · current" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
               <YearTrack
                 appeals={appeals.filter((a) => a.assessment_year === activeYear)}
                 canEdit={can("appeals.edit")}
@@ -257,7 +262,6 @@ export function Property() {
               {trackError && <div className="error" role="alert">{trackError}</div>}
             </div>
             <div className="mside">
-              <PhotoPanel propertyId={p.id} photo={p.photo ?? null} assetType={p.asset_type} address={splitMatterTitle(p.title).place} canEdit={can("properties.edit")} onChanged={() => reload()} />
               <dl className="facts">
                 <div><dt>Now</dt><dd className={hot ? "hot" : ""}>{now ? `${LEVEL_LABELS[now.level]} · ${SUBSTAGE_LABELS[now.substage]}` : "No appeal yet"}{hot ? ` · ${now!.days_in_substage} days` : ""}{appeals.some((a) => a.refund_status === "awaiting") && <> <span className="pill copper">Awaiting refund</span></>}</dd></div>
                 <div><dt>Attorney</dt><dd>{p.attorney_name ?? "Not assigned"}</dd></div>

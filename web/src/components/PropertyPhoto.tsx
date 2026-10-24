@@ -81,26 +81,30 @@ export function PhotoPanel({ propertyId, photo, assetType, address, canEdit, onC
     } catch (e) { setError(errorText(e)); } finally { setBusy(""); }
   }
 
+  const label = busy === "Uploading" ? "Uploading" : busy === "Removing" ? "Removing" : null;
   return (
     <div className="pphoto">
-      {photo ? (
-        <button type="button" className="pphoto-img" onClick={() => setOpen(true)} aria-label={`Open the photo of ${address}`}>
-          <img src={photoUrl(propertyId, photo.updatedAt, "large")} alt={`Photo of ${address}`} />
-        </button>
-      ) : (
-        <div className="pphoto-img empty">
-          <BuildingIcon type={assetType} size={40} />
-          <span className="meta">{canEdit ? "No photo yet" : "No photo"}</span>
-        </div>
-      )}
-      {canEdit && (
-        <div className="pphoto-acts">
-          <button type="button" className="btn small secondary" disabled={Boolean(busy)} onClick={() => input.current?.click()}>{busy === "Uploading" ? "Uploading" : photo ? "Change photo" : "Add a photo"}</button>
-          {photo && <button type="button" className="btn small ghost" disabled={Boolean(busy)} onClick={() => void remove()}>Remove</button>}
-          <input ref={input} type="file" hidden accept="image/jpeg,image/png,image/webp" aria-label="Choose a photo of the property"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
-        </div>
-      )}
+      <div className={`pphoto-frame${busy ? " busy" : ""}`}>
+        {photo ? (
+          <button type="button" className="pphoto-img" onClick={() => setOpen(true)} aria-label={`Open the photo of ${address}`}>
+            <img src={photoUrl(propertyId, photo.updatedAt, "large")} alt={`Photo of ${address}`} />
+          </button>
+        ) : (
+          <div className="pphoto-img empty">
+            <BuildingIcon type={assetType} size={34} />
+            <span className="meta">{canEdit ? "No photo yet" : "No photo"}</span>
+            {canEdit && <button type="button" className="btn small secondary" disabled={Boolean(busy)} onClick={() => input.current?.click()}>{label ?? "Add a photo"}</button>}
+          </div>
+        )}
+        {canEdit && photo && (
+          <div className="pphoto-acts">
+            <button type="button" className="btn small secondary" disabled={Boolean(busy)} onClick={() => input.current?.click()}>{label ?? "Change photo"}</button>
+            <button type="button" className="btn small secondary" disabled={Boolean(busy)} onClick={() => void remove()}>Remove</button>
+          </div>
+        )}
+        {canEdit && <input ref={input} type="file" hidden accept="image/jpeg,image/png,image/webp" aria-label="Choose a photo of the property"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />}
+      </div>
       {photo?.source === "dropbox" && photo.sourceName && <div className="mn">From Files: {photo.sourceName}</div>}
       {error && <div className="error" role="alert">{error}</div>}
       {open && photo && (
