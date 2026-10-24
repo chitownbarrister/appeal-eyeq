@@ -20,6 +20,7 @@ import { billingDesignRouter } from "./billing-design.js";
 import { evaluationRouter } from "./evaluation.js";
 import { importsRouter } from "./imports.js";
 import { propertyPhotosRouter } from "./property-photos.js";
+import { dashboardModulesRouter } from "./dashboard-modules.js";
 
 export const firmRouter = Router();
 firmRouter.use(requireFirmContext);
@@ -35,6 +36,7 @@ firmRouter.use(billingDesignRouter);
 firmRouter.use(evaluationRouter);
 firmRouter.use(importsRouter);
 firmRouter.use(propertyPhotosRouter);
+firmRouter.use(dashboardModulesRouter);
 
 // ---------------------------------------------------------------- summary
 firmRouter.get("/summary", async (req, res) => {
